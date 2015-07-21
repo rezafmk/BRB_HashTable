@@ -1,7 +1,44 @@
 #include <stdio.h>
+#include "hashtable.h"
 
 
 #define RECORD_LENGTH 64
+#define NUM_BUCKETS 1000000
+
+#define BLOCK_ID (gridDim.y * blockIdx.x + blockIdx.y)
+#define THREAD_ID (threadIdx.x)
+#define TID (BLOCK_ID * blockDim.x + THREAD_ID)
+
+typedef struct
+{
+	pagingConfig_t* pconfig;
+	cudaStream_t* serviceStream;
+} dataPackage_t;
+
+
+__global__ void kernel(char* records, int numRecords, int* recordSizes, int numThreads, pagingConfig_t* pconfig, hashtableConfig_t* hconfig)
+{
+	int index = TID;
+	
+	for(int i = index; i < numRecords; i += numThreads)
+	{
+		char* record = &records[i * RECORD_LENGTH];
+		int recordSize = recordSizes[i];
+
+		add(record, recordSize, 1, sizeof(int), hconfig, pconfig);
+
+	}
+}
+
+void* recyclePages(void* arg)
+{
+	pagingConfig_t* pconfig = ((dataPackage_t*) arg)->pconfig;
+	cudaStream_t* serviceStream = ((dataPackage_5*) arg)->serviceStream;
+
+	pageRecycler(pconfig, serviceStream);
+	return NULL;
+}
+
 
 int main(int argc, char** argv)
 {
@@ -15,7 +52,11 @@ int main(int argc, char** argv)
 
 	dim3 grid(1, 1, 8);
 	dim3 block(1, 1, 512);
+	int numThreads = grid.x * block.x;
+	numRecords = (numRecords % numThreads == 0)? numRecords : (numRecords + (numThreads - (numRecords % numThreads)));
+	
 
+	printf("@INFO: Allocating %dMB for input data\n", (numRecords * RECORD_LENGTH) / (1 << 20));
 	char* records = (char*) malloc(numRecords * RECORD_LENGTH);
 	int* recordSizes = (int*) malloc(numRecords * sizeof(int));
 
@@ -57,10 +98,20 @@ int main(int argc, char** argv)
 	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
 	initPaging(int hashBuckets, largeInt availableGPUMemory, int minimumQueueSize, largeInt freeMemBaseAddr, pagingConfig_t* pconfig)
 
+	hashtableConfig_t* hconfig = (hashtableConfig_t*) malloc(sizeof(hashtableConfig_t));
+	hashtableInit(NUM_BUCKETS, 64, hconfig);
+	
 	
 	pagingConfig_t* dpconfig;
 	cudaMalloc((void**) dpconfig, sizeof(pagingConfig_t));
 	cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
+
+	pagingConfig_t* dhconfig;
+	cudaMalloc((void**) dhconfig, sizeof(hashtableConfig_t));
+	cudaMemcpy(dhconfig, hconfig, sizeof(hashtableConfig_t), cudaMemcpyHostToDevice);
+	
+	cudaStream_t serviceStream;
+	cudaStreamCreate(&serviceStream);
 	
 	//==========================================================================//
 	
@@ -68,8 +119,20 @@ int main(int argc, char** argv)
 
 	//====================== Calling the kernel ================================//
 
-	kernel<<<grid, block>>>(drecords, drecordSizes
+	kernel<<<grid, block>>>(drecords, numRecords, drecordSizes, numThreads, dpconfig, dhconfig);
 
+	
+	pthread_t thread;
+	dataPackage_t argument;
+
+	argument.pconfig = pconfig;
+	argument.serviceStream = &serviceStream;
+
+	pthread_create(&thread, NULL, recyclePages, &argument);
+
+	while(cudaSuccess != cudaStreamQuery(execStream))
+		usleep(300);	
+	cudaThreadSynchronize();
 	
 	
 }

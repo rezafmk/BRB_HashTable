@@ -1,7 +1,6 @@
-#ifndef __HASH_CU__
-#define __HASH_CU__
+#ifndef __PAGING_CU__
+#define __PAGING_CU__
 
-#include <stdio.h>
 #include "paging.h"
 #define PAGE_SIZE (1 << 12)
 #define QUEUE_SIZE 200
@@ -146,16 +145,7 @@ __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 	return page;
 
 }
-//This is run only by one CPU, so it can be simplified (in terms of synchronization)
-__host__ page_t* peekDirtyPage(pagingConfig_t* pconfig)
-{
-	page_t* page = NULL;
-	if(pconfig->queue->rear != pconfig->queue->dirtyRear)
-	{
-		page = pconfig->pages[pconfig->queue->pageIds[pconfig->queue->rear]];
-	}
-	return page;
-}
+
 
 __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingConfig_t* pconfig)
 {
@@ -222,6 +212,19 @@ __device__ void revokePage(page_t* page)
 		queue->pushDirtyPage(page);
 		page = page->next;
 	}
+}
+
+
+
+//This is run only by one CPU, so it can be simplified (in terms of synchronization)
+__host__ page_t* peekDirtyPage(pagingConfig_t* pconfig)
+{
+	page_t* page = NULL;
+	if(pconfig->queue->rear != pconfig->queue->dirtyRear)
+	{
+		page = pconfig->pages[pconfig->queue->pageIds[pconfig->queue->rear]];
+	}
+	return page;
 }
 
 //Executed by a separate CPU thread
