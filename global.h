@@ -1,6 +1,10 @@
 #ifndef __GLOBAL_H__
 #define __GLOBAL_H__
 
+#include <stdio.h>
+#include <unistd.h>
+#include <pthread.h>
+
 #define PAGE_SIZE (1 << 12)
 #define GROUP_SIZE (PAGE_SIZE / sizeof(hashBucket_t))
 #define ALIGNMET 8
@@ -41,6 +45,7 @@ typedef struct
 
 	//This will be a queue, holding pointers to pages that are available
 	pageQueue_t* queue;
+	pageQueue_t* dqueue;
 
 	int initialPageAssignedCounter;
 	int initialPageAssignedCap;

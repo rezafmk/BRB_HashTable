@@ -1,6 +1,3 @@
-#include <stdio.h>
-#include <unistd.h>
-#include <pthread.h>
 #include "global.h"
 
 
@@ -44,13 +41,11 @@ void* recyclePages(void* arg)
 
 int main(int argc, char** argv)
 {
-	if(argc < 2)
+	int numRecords = 4000000;
+	if(argc == 2)
 	{
-		printf("Usage: %s <numinputs>\n", argv[0]);
-		return 1;
+		numRecords = atoi(argv[1]);
 	}	
-
-	int numRecords = atoi(argv[1]);
 
 	dim3 grid(1, 1, 8);
 	dim3 block(1, 1, 512);
@@ -88,6 +83,8 @@ int main(int argc, char** argv)
 		records[i * RECORD_LENGTH + j + 3] = 'm';
 	}
 
+	printf("@INFO: done initializing the input data\n");
+
 	char* drecords;
 	cudaMalloc((void**) &drecords, numRecords * RECORD_LENGTH);
 	cudaMemcpy(drecords, records, numRecords * RECORD_LENGTH, cudaMemcpyHostToDevice);
@@ -96,17 +93,23 @@ int main(int argc, char** argv)
 	cudaMalloc((void**) &drecordSizes, numRecords * sizeof(int));
 	cudaMemcpy(drecordSizes, recordSizes, numRecords * sizeof(int), cudaMemcpyHostToDevice);
 
+	printf("@INFO: done allocating input records on GPU\n");
+
 	//============ initializing the hash table and page table ==================//
 	largeInt availableGPUMemory = (1 << 29);
 	unsigned minimumQueueSize = 20;
 	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
 	memset(pconfig, 0, sizeof(pagingConfig_t));
+	
+	printf("@INFO: calling initPaging\n");
 	initPaging(availableGPUMemory, minimumQueueSize, pconfig);
 
 	hashtableConfig_t* hconfig = (hashtableConfig_t*) malloc(sizeof(hashtableConfig_t));
+	printf("@INFO: calling hashtableInit\n");
 	hashtableInit(NUM_BUCKETS, 64, hconfig);
 	
 	
+	printf("@INFO: transferring config structs to GPU memory\n");
 	pagingConfig_t* dpconfig;
 	cudaMalloc((void**) &dpconfig, sizeof(pagingConfig_t));
 	cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
@@ -124,6 +127,7 @@ int main(int argc, char** argv)
 
 	//====================== Calling the kernel ================================//
 
+	printf("@INFO: calling kernel\n");
 	kernel<<<grid, block>>>(drecords, numRecords, drecordSizes, numThreads, dpconfig, dhconfig);
 
 	

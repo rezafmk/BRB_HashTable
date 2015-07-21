@@ -4,12 +4,14 @@ void initPaging(largeInt availableGPUMemory, int minimumQueueSize, pagingConfig_
 {
 
 	initQueue(pconfig);
+	printf("@INFO: done doing initQueue\n");
 	pconfig->totalNumPages = availableGPUMemory / PAGE_SIZE;
 	pconfig->initialPageAssignedCounter = 0;
 	pconfig->initialPageAssignedCap = pconfig->totalNumPages - minimumQueueSize;
 
 	cudaMalloc((void**) &(pconfig->dbuffer), pconfig->totalNumPages * PAGE_SIZE);
 	cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
+	printf("@INFO: done allocating base buffer in GPU memory\n");
 
 	pconfig->hbuffer = malloc((unsigned) HOST_BUFFER_SIZE);
 	memset(pconfig->hbuffer, 0, (unsigned) HOST_BUFFER_SIZE);
@@ -22,15 +24,18 @@ void initPaging(largeInt availableGPUMemory, int minimumQueueSize, pagingConfig_
 		pconfig->hpages[i].next = NULL;
 		pconfig->hpages[i].used = 0;
 	}
+	printf("@INFO: done initializing pages meta data\n");
 	cudaMalloc((void**) &(pconfig->pages), pconfig->totalNumPages * sizeof(page_t));
 	cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
 
 	pconfig->minimumQueueSize = minimumQueueSize;
+	printf("@INFO: Adding some clean pages to queue\n");
 	//Adding last free pages to queue
 	for(int i = pconfig->totalNumPages - minimumQueueSize; i < pconfig->totalNumPages; i ++)
 	{
-		pushCleanPage(&(pconfig->pages[i]), pconfig);
+		pushCleanPage(&(pconfig->hpages[i]), pconfig);
 	}
+	printf("@INFO: done doing initPaging\n");
 }
 
 void initQueue(pagingConfig_t* pconfig)
@@ -38,6 +43,7 @@ void initQueue(pagingConfig_t* pconfig)
 	//This has to be allocated as host-pinned
 	cudaHostAlloc((void**) &(pconfig->queue), sizeof(pageQueue_t), cudaHostAllocMapped);
 	memset(pconfig->queue, 0, sizeof(pageQueue_t));
+	cudaHostGetDevicePointer((void**) &(pconfig->dqueue), pconfig->queue, 0);
 
 	pconfig->queue->front = 0;
 	pconfig->queue->rear = 0;
@@ -61,17 +67,17 @@ __device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig)
 	unsigned oldLock = 1;
 	do
 	{
-		oldLock = atomicExch(&(pconfig->queue->lock), 1);
+		oldLock = atomicExch(&(pconfig->dqueue->lock), 1);
 		if(oldLock == 0)
 		{
 			//FIXME: this assumes we never have a full queue
-			pconfig->queue->pageIds[pconfig->queue->dirtyRear] = page->id;
-			pconfig->queue->dirtyRear ++;
-			pconfig->queue->dirtyRear %= QUEUE_SIZE;
+			pconfig->dqueue->pageIds[pconfig->dqueue->dirtyRear] = page->id;
+			pconfig->dqueue->dirtyRear ++;
+			pconfig->dqueue->dirtyRear %= QUEUE_SIZE;
 		}
 	} while(oldLock == 1);
 
-	atomicExch(&(pconfig->queue->lock), 0);
+	atomicExch(&(pconfig->dqueue->lock), 0);
 
 	//release lock
 }
@@ -84,19 +90,19 @@ __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 	unsigned oldLock = 1;
 	do
 	{
-		oldLock = atomicExch(&(pconfig->queue->lock), 1);
+		oldLock = atomicExch(&(pconfig->dqueue->lock), 1);
 		if(oldLock == 0)
 		{
-			if(pconfig->queue->rear != pconfig->queue->front)
+			if(pconfig->dqueue->rear != pconfig->dqueue->front)
 			{
-				page = &(pconfig->pages[pconfig->queue->pageIds[pconfig->queue->front]]);
-				pconfig->queue->front ++;
-				pconfig->queue->front %= QUEUE_SIZE;
+				page = &(pconfig->pages[pconfig->dqueue->pageIds[pconfig->dqueue->front]]);
+				pconfig->dqueue->front ++;
+				pconfig->dqueue->front %= QUEUE_SIZE;
 			}
 		}
 	//release lock
 	} while(oldLock == 1);
-	atomicExch(&(pconfig->queue->lock), 0);
+	atomicExch(&(pconfig->dqueue->lock), 0);
 
 	return page;
 
