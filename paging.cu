@@ -11,8 +11,8 @@ void initPaging(largeInt availableGPUMemory, int minimumQueueSize, pagingConfig_
 	cudaMalloc((void**) &(pconfig->dbuffer), pconfig->totalNumPages * PAGE_SIZE);
 	cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
 
-	pconfig->hbuffer = malloc(HOST_BUFFER_SIZE);
-	memset(pconfig->hbuffer, 0, HOST_BUFFER_SIZE);
+	pconfig->hbuffer = malloc((unsigned) HOST_BUFFER_SIZE);
+	memset(pconfig->hbuffer, 0, (unsigned) HOST_BUFFER_SIZE);
 
 	//This has to be allocated GPU-side
 	pconfig->hpages = (page_t*) malloc(pconfig->totalNumPages * sizeof(page_t));
