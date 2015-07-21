@@ -1,50 +1,6 @@
-#ifndef __PAGING_CU__
-#define __PAGING_CU__
+#include "global.h"
 
-#include "paging.h"
-#define PAGE_SIZE (1 << 12)
-#define QUEUE_SIZE 200
-#define HOST_BUFFER_SIZE (3 * (1 << 30))
-
-typedef largeInt long long int;
-
-typedef struct
-{
-	//Alternatively, this can be page_t*
-	int pageIds[QUEUE_SIZE]; 
-	int front;
-	int rear;
-	int dirtyRear;
-	int lock;
-	
-} pageQueue_t;
-
-typedef struct
-{
-	page_t* next;
-	unsigned used;
-	unsigned id;
-} page_t;
-
-typedef struct
-{
-	page_t* pages;
-	page_t* hpages;
-
-	void* dbuffer;
-	void* hbuffer;
-	int totalNumPages;
-
-	//This will be a queue, holding pointers to pages that are available
-	pageQueue_t* queue;
-
-	int initialPageAssignedCounter;
-	int initialPageAssignedCap;
-	int minimumQueueSize;
-} pagingConfig_t;
-
-
-__host__ void initPaging(largeInt availableGPUMemory, int minimumQueueSize, pagingConfig_t* pconfig)
+void initPaging(largeInt availableGPUMemory, int minimumQueueSize, pagingConfig_t* pconfig)
 {
 
 	initQueue(pconfig);
@@ -73,11 +29,11 @@ __host__ void initPaging(largeInt availableGPUMemory, int minimumQueueSize, pagi
 	//Adding last free pages to queue
 	for(int i = pconfig->totalNumPages - minimumQueueSize; i < pconfig->totalNumPages; i ++)
 	{
-		pconfig->queue->pushCleanPage(&(pconfig->pages[i]));
+		pushCleanPage(&(pconfig->pages[i]), pconfig);
 	}
 }
 
-__host__ void initQueue(pagingConfig_t* pconfig)
+void initQueue(pagingConfig_t* pconfig)
 {
 	//This has to be allocated as host-pinned
 	cudaHostAlloc((void**) &(pconfig->queue), sizeof(pageQueue_t), cudaHostAllocMapped);
@@ -90,9 +46,9 @@ __host__ void initQueue(pagingConfig_t* pconfig)
 }
 
 //This is called only by CPU thread, so needs no synchronization (unless run by multiple threads)
-__host__ void pushCleanPage(page_t* page, pagingConfig_t* pconfig)
+void pushCleanPage(page_t* page, pagingConfig_t* pconfig)
 {
-	pconfig->queue->pagesIds[pconfig->queue->rear] = page->id;
+	pconfig->queue->pageIds[pconfig->queue->rear] = page->id;
 	pconfig->queue->rear ++;
 	pconfig->queue->rear %= QUEUE_SIZE;
 	pconfig->queue->dirtyRear = pconfig->queue->rear;
@@ -133,7 +89,7 @@ __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 		{
 			if(pconfig->queue->rear != pconfig->queue->front)
 			{
-				page = pconfig->pages[pconfig->queue->pageIds[pconfig->queue->front]];
+				page = &(pconfig->pages[pconfig->queue->pageIds[pconfig->queue->front]]);
 				pconfig->queue->front ++;
 				pconfig->queue->front %= QUEUE_SIZE;
 			}
@@ -157,6 +113,7 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 		return (void*) (parentPage->id * PAGE_SIZE + oldUsed);
 	}
 
+	page_t* newPage = NULL;
 	//acquire some lock
 	unsigned oldLock = 1;
 	do
@@ -165,12 +122,12 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 
 		if(oldLock == 0)
 		{
-			page_t* newPage = allocateNewPage(pconfig);
+			newPage = allocateNewPage(pconfig);
 
 			//If no more page exists and no page is used yet (for this bucketgroup), don't do anything
 			if(newPage == NULL)
 			{
-				revokePage(parentPage);
+				revokePage(parentPage, pconfig);
 				//releaseLock
 				atomicExch(&(myGroup->pageLock), 0);
 				return NULL;
@@ -189,9 +146,9 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 	return (void*) (oldUsed + newPage->id * PAGE_SIZE);
 }
 
-page_t* allocateNewPage(pagingConfig_t* pconfig)
+__device__ page_t* allocateNewPage(pagingConfig_t* pconfig)
 {
-	int pageIdToAllocate = atomicInc(&(pconfig->initialPageAssignedCounter), INT_MAX);
+	int pageIdToAllocate = atomicInc((unsigned*) &(pconfig->initialPageAssignedCounter), INT_MAX);
 	if(pageIdToAllocate < pconfig->initialPageAssignedCap)
 	{
 		return &(pconfig->pages[pageIdToAllocate]);
@@ -204,12 +161,12 @@ page_t* allocateNewPage(pagingConfig_t* pconfig)
 }
 
 //Freeing the chain pages
-__device__ void revokePage(page_t* page)
+__device__ void revokePage(page_t* page, pagingConfig_t* pconfig)
 {
 	//If parent page is -1, then we have nothing to do
 	while(page != NULL)
 	{
-		queue->pushDirtyPage(page);
+		pushDirtyPage(page, pconfig);
 		page = page->next;
 	}
 }
@@ -217,36 +174,36 @@ __device__ void revokePage(page_t* page)
 
 
 //This is run only by one CPU, so it can be simplified (in terms of synchronization)
-__host__ page_t* peekDirtyPage(pagingConfig_t* pconfig)
+page_t* peekDirtyPage(pagingConfig_t* pconfig)
 {
 	page_t* page = NULL;
 	if(pconfig->queue->rear != pconfig->queue->dirtyRear)
 	{
-		page = pconfig->pages[pconfig->queue->pageIds[pconfig->queue->rear]];
+		page = &(pconfig->pages[pconfig->queue->pageIds[pconfig->queue->rear]]);
 	}
 	return page;
 }
 
 //Executed by a separate CPU thread
-__host__ void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream)
+void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream)
 {
 	while(true)
 	{
 		page_t* page;
 		if((page = peekDirtyPage(pconfig)) != NULL)
 		{
-			cudaMemcpyAsync((largeInt) pconfig->hbuffer + page->id * PAGE_SIZE, (largeInt) pconfig->dbuffer + page->id * PAGE_SIZE, PAGE_SIZE, cudaMemcpyDeviceToHost, *serviceStream);
-			cudaMemsetAsync((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE, 0, PAGE_SIZE, *serviceStream);
+			cudaMemcpyAsync((void*) ((largeInt) pconfig->hbuffer + page->id * PAGE_SIZE), (void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), PAGE_SIZE, cudaMemcpyDeviceToHost, *serviceStream);
+			cudaMemsetAsync((void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), 0, PAGE_SIZE, *serviceStream);
         		while(cudaSuccess != cudaStreamQuery(*serviceStream));
 
 			page->used = 0;
 			page->next= NULL;
 
 			//[Atomically] advancing rear..
-			int tempRear = queue->rear;
+			int tempRear = pconfig->queue->rear;
 			tempRear ++;
 			tempRear %= QUEUE_SIZE;
-			queue->rear = tempRear;
+			pconfig->queue->rear = tempRear;
 
 		}
 	}
@@ -254,4 +211,3 @@ __host__ void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream)
 
 
 
-#endif

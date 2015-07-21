@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <pthread.h>
-#include "hashtable.h"
+#include "global.h"
 
 
 #define RECORD_LENGTH 64
@@ -28,8 +28,7 @@ __global__ void kernel(char* records, int numRecords, int* recordSizes, int numT
 		int recordSize = recordSizes[i];
 		int value = 1;
 
-		add((void*) record, recordSize, (void*) &value, sizeof(int), hconfig, pconfig);
-
+		addToHashtable((void*) record, recordSize, (void*) &value, sizeof(int), hconfig, pconfig);
 	}
 }
 
@@ -98,7 +97,7 @@ int main(int argc, char** argv)
 	cudaMemcpy(drecordSizes, recordSizes, numRecords * sizeof(int), cudaMemcpyHostToDevice);
 
 	//============ initializing the hash table and page table ==================//
-	unsigned availableGPUMemory = (1 << 29);
+	largeInt availableGPUMemory = (1 << 29);
 	unsigned minimumQueueSize = 20;
 	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
 	memset(pconfig, 0, sizeof(pagingConfig_t));
