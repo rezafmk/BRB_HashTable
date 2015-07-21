@@ -44,7 +44,7 @@ typedef struct
 } pagingConfig_t;
 
 
-__host__ void initPaging(int hashBuckets, largeInt availableGPUMemory, int minimumQueueSize, largeInt freeMemBaseAddr, pagingConfig_t* pconfig)
+__host__ void initPaging(largeInt availableGPUMemory, int minimumQueueSize, pagingConfig_t* pconfig)
 {
 
 	initQueue(pconfig);

@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <unistd.h>
+#include <pthread.h>
 #include "hashtable.h"
 
 
@@ -24,8 +26,9 @@ __global__ void kernel(char* records, int numRecords, int* recordSizes, int numT
 	{
 		char* record = &records[i * RECORD_LENGTH];
 		int recordSize = recordSizes[i];
+		int value = 1;
 
-		add(record, recordSize, 1, sizeof(int), hconfig, pconfig);
+		add((void*) record, recordSize, (void*) &value, sizeof(int), hconfig, pconfig);
 
 	}
 }
@@ -33,7 +36,7 @@ __global__ void kernel(char* records, int numRecords, int* recordSizes, int numT
 void* recyclePages(void* arg)
 {
 	pagingConfig_t* pconfig = ((dataPackage_t*) arg)->pconfig;
-	cudaStream_t* serviceStream = ((dataPackage_5*) arg)->serviceStream;
+	cudaStream_t* serviceStream = ((dataPackage_t*) arg)->serviceStream;
 
 	pageRecycler(pconfig, serviceStream);
 	return NULL;
@@ -95,19 +98,22 @@ int main(int argc, char** argv)
 	cudaMemcpy(drecordSizes, recordSizes, numRecords * sizeof(int), cudaMemcpyHostToDevice);
 
 	//============ initializing the hash table and page table ==================//
+	unsigned availableGPUMemory = (1 << 29);
+	unsigned minimumQueueSize = 20;
 	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
-	initPaging(int hashBuckets, largeInt availableGPUMemory, int minimumQueueSize, largeInt freeMemBaseAddr, pagingConfig_t* pconfig)
+	memset(pconfig, 0, sizeof(pagingConfig_t));
+	initPaging(availableGPUMemory, minimumQueueSize, pconfig);
 
 	hashtableConfig_t* hconfig = (hashtableConfig_t*) malloc(sizeof(hashtableConfig_t));
 	hashtableInit(NUM_BUCKETS, 64, hconfig);
 	
 	
 	pagingConfig_t* dpconfig;
-	cudaMalloc((void**) dpconfig, sizeof(pagingConfig_t));
+	cudaMalloc((void**) &dpconfig, sizeof(pagingConfig_t));
 	cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
 
-	pagingConfig_t* dhconfig;
-	cudaMalloc((void**) dhconfig, sizeof(hashtableConfig_t));
+	hashtableConfig_t* dhconfig;
+	cudaMalloc((void**) &dhconfig, sizeof(hashtableConfig_t));
 	cudaMemcpy(dhconfig, hconfig, sizeof(hashtableConfig_t), cudaMemcpyHostToDevice);
 	
 	cudaStream_t serviceStream;
@@ -130,7 +136,7 @@ int main(int argc, char** argv)
 
 	pthread_create(&thread, NULL, recyclePages, &argument);
 
-	while(cudaSuccess != cudaStreamQuery(execStream))
+	while(cudaSuccess != cudaStreamQuery(serviceStream))
 		usleep(300);	
 	cudaThreadSynchronize();
 	
