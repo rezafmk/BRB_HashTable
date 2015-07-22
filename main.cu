@@ -46,7 +46,7 @@ void* recyclePages(void* arg)
 int main(int argc, char** argv)
 {
 	cudaError_t errR;
-	int numRecords = 9000000;
+	int numRecords = 4500000;
 	if(argc == 2)
 	{
 		numRecords = atoi(argv[1]);
@@ -113,7 +113,7 @@ int main(int argc, char** argv)
 	printf("@INFO: done allocating input records on GPU\n");
 
 	//============ initializing the hash table and page table ==================//
-	largeInt availableGPUMemory = (1 << 29);
+	largeInt availableGPUMemory = (1 << 28);
 	unsigned minimumQueueSize = 20;
 	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
 	memset(pconfig, 0, sizeof(pagingConfig_t));

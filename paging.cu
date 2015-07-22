@@ -44,11 +44,6 @@ void initQueue(pagingConfig_t* pconfig)
 	cudaHostAlloc((void**) &(pconfig->queue), sizeof(pageQueue_t), cudaHostAllocMapped);
 	memset(pconfig->queue, 0, sizeof(pageQueue_t));
 	cudaHostGetDevicePointer((void**) &(pconfig->dqueue), pconfig->queue, 0);
-
-	pconfig->queue->front = 0;
-	pconfig->queue->rear = 0;
-	pconfig->queue->dirtyRear = 0;
-	pconfig->queue->lock = 0;
 }
 
 //This is called only by CPU thread, so needs no synchronization (unless run by multiple threads)
@@ -93,8 +88,10 @@ __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 			if(pconfig->dqueue->rear != pconfig->dqueue->front)
 			{
 				page = &(pconfig->pages[pconfig->dqueue->pageIds[pconfig->dqueue->front]]);
-				pconfig->dqueue->front ++;
-				pconfig->dqueue->front %= QUEUE_SIZE;
+				int front = pconfig->dqueue->front;
+				front ++;
+				front %= QUEUE_SIZE;
+				pconfig->dqueue->front = front;
 			}
 			//Unlocking
 			atomicExch(&(pconfig->dqueue->lock), 0);
@@ -106,9 +103,13 @@ __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 }
 
 
+//TODO: currently we don't mark a bucket group to not ask for more memory if it previously revoked its pages
 __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingConfig_t* pconfig)
 {
+	if(myGroup->failed == 1)
+		return NULL;
 	page_t* parentPage = myGroup->parentPage;
+	
 
 	unsigned oldUsed = 0;
 	if(parentPage != NULL)
@@ -148,7 +149,11 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 			//If no more page exists and no page is used yet (for this bucketgroup), don't do anything
 			if(newPage == NULL)
 			{
-				//revokePage(parentPage, pconfig); //TODO uncomment
+				if(myGroup->failed != 1)
+				{
+					revokePage(parentPage, pconfig); //TODO uncomment
+					myGroup->failed = 1;
+				}
 				//releaseLock
 				atomicExch(&(myGroup->pageLock), 0);
 				return NULL;
@@ -177,7 +182,7 @@ __device__ page_t* allocateNewPage(pagingConfig_t* pconfig)
 	}
 	else
 	{
-		return NULL; //TODO remove this line. Is just put here to simplify debugging.
+		//return NULL;
 		//atomiPop will pop an item only if `minimmQuerySize` free entry is available, NULL otherwise.
 		return popCleanPage(pconfig);
 	}
@@ -202,7 +207,7 @@ page_t* peekDirtyPage(pagingConfig_t* pconfig)
 	page_t* page = NULL;
 	if(pconfig->queue->rear != pconfig->queue->dirtyRear)
 	{
-		page = &(pconfig->pages[pconfig->queue->pageIds[pconfig->queue->rear]]);
+		page = &(pconfig->hpages[pconfig->queue->pageIds[pconfig->queue->rear]]);
 	}
 	return page;
 }
@@ -215,6 +220,7 @@ void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream)
 		page_t* page;
 		if((page = peekDirtyPage(pconfig)) != NULL)
 		{
+			printf("recycling one page\n");
 			cudaMemcpyAsync((void*) ((largeInt) pconfig->hbuffer + page->id * PAGE_SIZE), (void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), PAGE_SIZE, cudaMemcpyDeviceToHost, *serviceStream);
 			cudaMemsetAsync((void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), 0, PAGE_SIZE, *serviceStream);
         		while(cudaSuccess != cudaStreamQuery(*serviceStream));
