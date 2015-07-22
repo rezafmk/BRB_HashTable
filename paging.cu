@@ -114,7 +114,7 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 	if(parentPage != NULL)
 	{
 		oldUsed = atomicAdd(&(parentPage->used), size);
-		if(oldUsed < PAGE_SIZE)
+		if((oldUsed + size) < PAGE_SIZE)
 		{
 			return (void*) ((largeInt) pconfig->dbuffer + parentPage->id * PAGE_SIZE + oldUsed);
 		}
@@ -135,7 +135,7 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 			if(parentPage != NULL)
 			{
 				oldUsed = atomicAdd(&(parentPage->used), size);
-				if(oldUsed < PAGE_SIZE)
+				if((oldUsed + size) < PAGE_SIZE)
 				{
 					//Unlocking
 					atomicExch(&(myGroup->pageLock), 0);
