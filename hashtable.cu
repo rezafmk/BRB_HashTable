@@ -1,10 +1,9 @@
 #include "global.h"
 
-void hashtableInit(int numBuckets, int bucketsPerGroup, hashtableConfig_t* hconfig)
+void hashtableInit(int numBuckets, hashtableConfig_t* hconfig)
 {
 	hconfig->numBuckets = numBuckets;
-	hconfig->bucketsPerGroup = bucketsPerGroup;
-	int numGroups = (numBuckets + (bucketsPerGroup - 1)) / bucketsPerGroup;
+	int numGroups = (numBuckets + (GROUP_SIZE - 1)) / GROUP_SIZE;
 	cudaMalloc((void**) &(hconfig->groups), numGroups * sizeof(bucketGroup_t));
 	cudaMemset(hconfig->groups, 0, numGroups * sizeof(bucketGroup_t));
 	//hconfig->groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
@@ -38,7 +37,7 @@ __device__ void resolveSameKeyAddition(void const* key, void* value, void* oldVa
 __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize)
 {
 	
-	do
+	while(bucket != NULL)
 	{
 		char* oldKey = (char*) ((largeInt) bucket + sizeof(hashBucket_t));
 		bool success = true;
@@ -55,7 +54,7 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 			break;
 
 		bucket = bucket->next;
-	} while(bucket != NULL);
+	}
 
 	return bucket;
 }

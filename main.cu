@@ -122,7 +122,7 @@ int main(int argc, char** argv)
 
 	hashtableConfig_t* hconfig = (hashtableConfig_t*) malloc(sizeof(hashtableConfig_t));
 	printf("@INFO: calling hashtableInit\n");
-	hashtableInit(NUM_BUCKETS, 64, hconfig);
+	hashtableInit(NUM_BUCKETS, hconfig);
 	
 	
 	printf("@INFO: transferring config structs to GPU memory\n");

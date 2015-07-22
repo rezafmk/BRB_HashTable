@@ -113,10 +113,14 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 {
 	page_t* parentPage = myGroup->parentPage;
 
-	unsigned oldUsed = atomicAdd(&(parentPage->used), size);
-	if(oldUsed < PAGE_SIZE)
+	unsigned oldUsed = 0;
+	if(parentPage != NULL)
 	{
-		return (void*) (parentPage->id * PAGE_SIZE + oldUsed);
+		oldUsed = atomicAdd(&(parentPage->used), size);
+		if(oldUsed < PAGE_SIZE)
+		{
+			return (void*) (parentPage->id * PAGE_SIZE + oldUsed);
+		}
 	}
 
 	page_t* newPage = NULL;

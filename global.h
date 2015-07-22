@@ -6,7 +6,7 @@
 #include <pthread.h>
 
 #define PAGE_SIZE (1 << 12)
-#define GROUP_SIZE (PAGE_SIZE / sizeof(hashBucket_t))
+#define GROUP_SIZE 64
 #define ALIGNMET 8
 
 #define PAGE_SIZE (1 << 12)
@@ -77,8 +77,6 @@ typedef struct
 {
 	bucketGroup_t* groups;
 	int numBuckets;
-	int bucketsPerGroup;
-
 } hashtableConfig_t;
 
 
@@ -95,7 +93,7 @@ __device__ void revokePage(page_t* page, pagingConfig_t* pconfig);
 void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream);
 
 
-void hashtableInit(int numBuckets, int bucketsPerGroup, hashtableConfig_t* hconfig);
+void hashtableInit(int numBuckets, hashtableConfig_t* hconfig);
 __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets);
 __device__ void resolveSameKeyAddition(void const* key, void* value, void* oldValue);
 __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize);
