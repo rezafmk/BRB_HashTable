@@ -5,7 +5,9 @@ void hashtableInit(int numBuckets, int bucketsPerGroup, hashtableConfig_t* hconf
 	hconfig->numBuckets = numBuckets;
 	hconfig->bucketsPerGroup = bucketsPerGroup;
 	int numGroups = (numBuckets + (bucketsPerGroup - 1)) / bucketsPerGroup;
-	hconfig->groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
+	cudaMalloc((void**) &(hconfig->groups), numGroups * sizeof(bucketGroup_t));
+	cudaMemset(hconfig->groups, 0, numGroups * sizeof(bucketGroup_t));
+	//hconfig->groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
 }
 
 __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)

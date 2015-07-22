@@ -41,14 +41,15 @@ void* recyclePages(void* arg)
 
 int main(int argc, char** argv)
 {
-	int numRecords = 4000000;
+	cudaError_t errR;
+	int numRecords = 400000;
 	if(argc == 2)
 	{
 		numRecords = atoi(argv[1]);
 	}	
 
-	dim3 grid(1, 1, 8);
-	dim3 block(1, 1, 512);
+	dim3 grid(8, 1, 1);
+	dim3 block(512, 1, 1);
 	int numThreads = grid.x * block.x;
 	numRecords = (numRecords % numThreads == 0)? numRecords : (numRecords + (numThreads - (numRecords % numThreads)));
 	
@@ -128,6 +129,9 @@ int main(int argc, char** argv)
 	//====================== Calling the kernel ================================//
 
 	printf("@INFO: calling kernel\n");
+	errR = cudaGetLastError();
+	printf("@REPORT: CUDA Error before calling the kernel: %s\n", cudaGetErrorString(errR));
+
 	kernel<<<grid, block>>>(drecords, numRecords, drecordSizes, numThreads, dpconfig, dhconfig);
 
 	
@@ -142,6 +146,8 @@ int main(int argc, char** argv)
 	while(cudaSuccess != cudaStreamQuery(serviceStream))
 		usleep(300);	
 	cudaThreadSynchronize();
-	
+
+	errR = cudaGetLastError();
+	printf("@REPORT: CUDA Error at the end of the program: %s\n", cudaGetErrorString(errR));
 	
 }
