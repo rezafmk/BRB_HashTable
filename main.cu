@@ -68,8 +68,8 @@ int main(int argc, char** argv)
 	for(int i = 0; i < numRecords; i ++)
 	{
 		recordSizes[i] = rand() % (RECORD_LENGTH - 8);
-		if(recordSizes[i] < 10)
-			recordSizes[i] = 3;
+		if(recordSizes[i] < 14)
+			recordSizes[i] = 14;
 	}
 
 	for(int i = 0; i < numRecords; i ++)
@@ -87,6 +87,16 @@ int main(int argc, char** argv)
 		records[i * RECORD_LENGTH + j + 1] = 'c';
 		records[i * RECORD_LENGTH + j + 2] = 'o';
 		records[i * RECORD_LENGTH + j + 3] = 'm';
+	}
+
+	printf("Some records:\n");
+	for(int i = 0; i < 20; i ++)
+	{
+		for(int j = 0; j < recordSizes[i]; j ++)
+		{
+			printf("%c", records[i * RECORD_LENGTH + j]);
+		}
+		printf("\n");
 	}
 
 	printf("@INFO: done initializing the input data\n");
