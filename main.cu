@@ -46,7 +46,7 @@ void* recyclePages(void* arg)
 int main(int argc, char** argv)
 {
 	cudaError_t errR;
-	int numRecords = 40000;
+	int numRecords = 800000;
 	if(argc == 2)
 	{
 		numRecords = atoi(argv[1]);
@@ -165,7 +165,7 @@ int main(int argc, char** argv)
 
 	pthread_create(&thread, NULL, recyclePages, &argument);
 
-	while(cudaSuccess != cudaStreamQuery(execStream))
+	while(cudaErrorNotReady == cudaStreamQuery(execStream))
 		usleep(300);	
 	cudaThreadSynchronize();
 
@@ -184,6 +184,26 @@ int main(int argc, char** argv)
 
 	printf("Total success: %d\n", totalSuccess);
 	printf("Total failed: %d\n", totalFailed);
+
+
+	cudaMemcpy(pconfig->hpages, pconfig->pages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyDeviceToHost);
+	int numUsed = 0;
+	int numNotUsed = 0;
+	int maxUsed = 0;
+	for(int i = 0; i < pconfig->totalNumPages; i ++)
+	{
+		if(pconfig->hpages[i].used > 0)
+			numUsed ++;
+		else
+			numNotUsed ++;
+
+		if(pconfig->hpages[i].used > maxUsed)
+			maxUsed = pconfig->hpages[i].used;
+	}
+
+	printf("@INFO: numUsed: %d\n", numUsed);
+	printf("@INFO: numNotUsed: %d\n", numNotUsed);
+	printf("@INFO: maxUsed: %d\n", maxUsed);
 
 	return 0;
 }

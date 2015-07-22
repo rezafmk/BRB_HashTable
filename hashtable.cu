@@ -28,7 +28,6 @@ __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
 }
 
 
-
 __device__ void resolveSameKeyAddition(void const* key, void* value, void* oldValue)
 {
 	*((int*) oldValue) += 1;
@@ -68,6 +67,7 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 
 	bucketGroup_t* group = &(hconfig->groups[groupNo]);
 	hashBucket_t* bucket = group->buckets[offsetWithinGroup];
+	hashBucket_t* existingBucket;
 
 	int keySizeAligned = (keySize % ALIGNMET == 0)? keySize : keySize + (ALIGNMET - (keySize % ALIGNMET));
 	int valueSizeAligned = (valueSize % ALIGNMET == 0)? valueSize : valueSize + (ALIGNMET - (valueSize % ALIGNMET));
@@ -82,9 +82,9 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 		{
 			//First see if the key already exists in one of the entries of this bucket
 			//The returned bucket is the 'entry' in which the key exists
-			if((bucket = containsKey(bucket, key, keySize)) != NULL)
+			if((existingBucket = containsKey(bucket, key, keySize)) != NULL)
 			{
-				void* oldValue = (void*) ((largeInt) bucket + sizeof(hashBucket_t) + keySizeAligned);
+				void* oldValue = (void*) ((largeInt) existingBucket + sizeof(hashBucket_t) + keySizeAligned);
 				resolveSameKeyAddition(key, value, oldValue);
 			}
 			else
@@ -93,8 +93,9 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 
 				if(newBucket != NULL)
 				{
-					//TODO use proper base
-					newBucket->next = (bucket == NULL)? NULL : (hashBucket_t*) ((largeInt) bucket - (largeInt) pconfig->dbuffer);
+					//TODO reduce the base offset if not null
+					//newBucket->next = (bucket == NULL)? NULL : (hashBucket_t*) ((largeInt) bucket - (largeInt) pconfig->dbuffer);
+					newBucket->next = bucket;
 					group->buckets[offsetWithinGroup] = newBucket;
 
 					//TODO: this assumes that input key is aligned by ALIGNMENT, which is not a safe assumption
@@ -112,7 +113,6 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 			atomicExch((unsigned*) &(group->locks[offsetWithinGroup]), 0);
 		}
 	} while(oldLock == 1);
-
 
 	//release the lock
 	return success;

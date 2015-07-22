@@ -129,6 +129,20 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 
 		if(oldLock == 0)
 		{
+
+			//Re-testing if the parent page has room (because the partenPage might have changed)
+			parentPage = myGroup->parentPage;
+			if(parentPage != NULL)
+			{
+				oldUsed = atomicAdd(&(parentPage->used), size);
+				if(oldUsed < PAGE_SIZE)
+				{
+					//Unlocking
+					atomicExch(&(myGroup->pageLock), 0);
+					return (void*) ((largeInt) pconfig->dbuffer + parentPage->id * PAGE_SIZE + oldUsed);
+				}
+			}
+			
 			newPage = allocateNewPage(pconfig);
 
 			//If no more page exists and no page is used yet (for this bucketgroup), don't do anything
