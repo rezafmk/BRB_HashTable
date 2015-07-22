@@ -36,7 +36,6 @@ __device__ void resolveSameKeyAddition(void const* key, void* value, void* oldVa
 
 __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize)
 {
-	
 	while(bucket != NULL)
 	{
 		char* oldKey = (char*) ((largeInt) bucket + sizeof(hashBucket_t));
@@ -109,10 +108,11 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 					success = false;
 				}
 			}
+
+			atomicExch((unsigned*) &(group->locks[offsetWithinGroup]), 0);
 		}
 	} while(oldLock == 1);
 
-	atomicExch((unsigned*) &(group->locks[offsetWithinGroup]), 0);
 
 	//release the lock
 	return success;

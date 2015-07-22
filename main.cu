@@ -23,9 +23,10 @@ __global__ void kernel(char* records, int numRecords, int* recordSizes, int numT
 	{
 		char* record = &records[i * RECORD_LENGTH];
 		int recordSize = recordSizes[i];
-		int value = 1;
+		recordSize = (recordSize % 8 == 0)? recordSize : (recordSize + (8 - (recordSize % 8)));
+		largeInt value = 1;
 
-		if(addToHashtable((void*) record, recordSize, (void*) &value, sizeof(int), hconfig, pconfig))
+		if(addToHashtable((void*) record, recordSize, (void*) &value, sizeof(largeInt), hconfig, pconfig))
 			status[index * 2] ++;
 		else
 			status[index * 2 + 1] ++;
@@ -45,7 +46,7 @@ void* recyclePages(void* arg)
 int main(int argc, char** argv)
 {
 	cudaError_t errR;
-	int numRecords = 400000;
+	int numRecords = 40000;
 	if(argc == 2)
 	{
 		numRecords = atoi(argv[1]);

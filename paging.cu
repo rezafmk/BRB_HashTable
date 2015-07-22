@@ -63,7 +63,6 @@ void pushCleanPage(page_t* page, pagingConfig_t* pconfig)
 //TODO: I assume the queue will not be full which is a faulty assumption.
 __device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig)
 {
-	//acquire lock
 	unsigned oldLock = 1;
 	do
 	{
@@ -74,18 +73,16 @@ __device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig)
 			pconfig->dqueue->pageIds[pconfig->dqueue->dirtyRear] = page->id;
 			pconfig->dqueue->dirtyRear ++;
 			pconfig->dqueue->dirtyRear %= QUEUE_SIZE;
+
+			//Unlocking
+			atomicExch(&(pconfig->dqueue->lock), 0);
 		}
 	} while(oldLock == 1);
-
-	atomicExch(&(pconfig->dqueue->lock), 0);
-
-	//release lock
 }
 
 //Run by GPU
 __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 {
-	//acquire lock
 	page_t* page = NULL;
 	unsigned oldLock = 1;
 	do
@@ -99,10 +96,10 @@ __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 				pconfig->dqueue->front ++;
 				pconfig->dqueue->front %= QUEUE_SIZE;
 			}
+			//Unlocking
+			atomicExch(&(pconfig->dqueue->lock), 0);
 		}
-	//release lock
 	} while(oldLock == 1);
-	atomicExch(&(pconfig->dqueue->lock), 0);
 
 	return page;
 
@@ -119,7 +116,7 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 		oldUsed = atomicAdd(&(parentPage->used), size);
 		if(oldUsed < PAGE_SIZE)
 		{
-			return (void*) (parentPage->id * PAGE_SIZE + oldUsed);
+			return (void*) ((largeInt) pconfig->dbuffer + parentPage->id * PAGE_SIZE + oldUsed);
 		}
 	}
 
@@ -137,7 +134,7 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 			//If no more page exists and no page is used yet (for this bucketgroup), don't do anything
 			if(newPage == NULL)
 			{
-				revokePage(parentPage, pconfig);
+				//revokePage(parentPage, pconfig); //TODO uncomment
 				//releaseLock
 				atomicExch(&(myGroup->pageLock), 0);
 				return NULL;
@@ -145,15 +142,16 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 
 			newPage->next = parentPage;
 			myGroup->parentPage = newPage;
+
+			//Unlocking
+			atomicExch(&(myGroup->pageLock), 0);
 		}
 
 	} while(oldLock == 1);
 
-	//releaseLock
-	atomicExch(&(myGroup->pageLock), 0);
 	oldUsed = atomicAdd(&(newPage->used), size);
 
-	return (void*) (oldUsed + newPage->id * PAGE_SIZE);
+	return (void*) ((largeInt) pconfig->dbuffer + oldUsed + newPage->id * PAGE_SIZE);
 }
 
 __device__ page_t* allocateNewPage(pagingConfig_t* pconfig)
@@ -165,6 +163,7 @@ __device__ page_t* allocateNewPage(pagingConfig_t* pconfig)
 	}
 	else
 	{
+		return NULL; //TODO remove this line. Is just put here to simplify debugging.
 		//atomiPop will pop an item only if `minimmQuerySize` free entry is available, NULL otherwise.
 		return popCleanPage(pconfig);
 	}
