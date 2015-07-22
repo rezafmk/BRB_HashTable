@@ -15,7 +15,7 @@ typedef struct
 } dataPackage_t;
 
 
-__global__ void kernel(char* records, int numRecords, int* recordSizes, int numThreads, pagingConfig_t* pconfig, hashtableConfig_t* hconfig)
+__global__ void kernel(char* records, int numRecords, int* recordSizes, int numThreads, pagingConfig_t* pconfig, hashtableConfig_t* hconfig, int* status)
 {
 	int index = TID;
 	
@@ -25,7 +25,10 @@ __global__ void kernel(char* records, int numRecords, int* recordSizes, int numT
 		int recordSize = recordSizes[i];
 		int value = 1;
 
-		addToHashtable((void*) record, recordSize, (void*) &value, sizeof(int), hconfig, pconfig);
+		if(addToHashtable((void*) record, recordSize, (void*) &value, sizeof(int), hconfig, pconfig))
+			status[index * 2] ++;
+		else
+			status[index * 2 + 1] ++;
 	}
 }
 
@@ -52,6 +55,8 @@ int main(int argc, char** argv)
 	dim3 block(512, 1, 1);
 	int numThreads = grid.x * block.x;
 	numRecords = (numRecords % numThreads == 0)? numRecords : (numRecords + (numThreads - (numRecords % numThreads)));
+	printf("@INFO: Number of records: %d (%d per thread)\n", numRecords, numRecords / numThreads);
+	
 	
 
 	printf("@INFO: Allocating %dMB for input data\n", (numRecords * RECORD_LENGTH) / (1 << 20));
@@ -118,9 +123,15 @@ int main(int argc, char** argv)
 	hashtableConfig_t* dhconfig;
 	cudaMalloc((void**) &dhconfig, sizeof(hashtableConfig_t));
 	cudaMemcpy(dhconfig, hconfig, sizeof(hashtableConfig_t), cudaMemcpyHostToDevice);
+
+	int* dstatus;
+	cudaMalloc((void**) &dstatus, numThreads * 2 * sizeof(int));
+	cudaMemset(dstatus, 0, numThreads * 2 * sizeof(int));
 	
 	cudaStream_t serviceStream;
 	cudaStreamCreate(&serviceStream);
+	cudaStream_t execStream;
+	cudaStreamCreate(&execStream);
 	
 	//==========================================================================//
 	
@@ -132,7 +143,7 @@ int main(int argc, char** argv)
 	errR = cudaGetLastError();
 	printf("@REPORT: CUDA Error before calling the kernel: %s\n", cudaGetErrorString(errR));
 
-	kernel<<<grid, block>>>(drecords, numRecords, drecordSizes, numThreads, dpconfig, dhconfig);
+	kernel<<<grid, block, 0, execStream>>>(drecords, numRecords, drecordSizes, numThreads, dpconfig, dhconfig, dstatus);
 
 	
 	pthread_t thread;
@@ -143,11 +154,25 @@ int main(int argc, char** argv)
 
 	pthread_create(&thread, NULL, recyclePages, &argument);
 
-	while(cudaSuccess != cudaStreamQuery(serviceStream))
+	while(cudaSuccess != cudaStreamQuery(execStream))
 		usleep(300);	
 	cudaThreadSynchronize();
 
 	errR = cudaGetLastError();
 	printf("@REPORT: CUDA Error at the end of the program: %s\n", cudaGetErrorString(errR));
-	
+
+	int* status = (int*) malloc(numThreads * 2 * sizeof(int));
+	cudaMemcpy(status, dstatus, numThreads * 2 * sizeof(int), cudaMemcpyDeviceToHost);
+
+	int totalSuccess = 0, totalFailed = 0;
+	for(int i = 0; i < numThreads; i ++)
+	{
+		totalSuccess += status[i * 2];
+		totalFailed += status[i * 2 + 1];
+	}
+
+	printf("Total success: %d\n", totalSuccess);
+	printf("Total failed: %d\n", totalFailed);
+
+	return 0;
 }
