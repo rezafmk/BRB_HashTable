@@ -184,10 +184,10 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 	//This assumes that the newPage is not already full, which is to be tested.
 	oldUsed = atomicAdd(&(newPage->used), size);
 
-	//if((oldUsed + size) < PAGE_SIZE)
+	if((oldUsed + size) < PAGE_SIZE)
 		return (void*) ((largeInt) pconfig->dbuffer + oldUsed + newPage->id * PAGE_SIZE);
-	//else
-		//return NULL;
+	else
+		return NULL;
 }
 
 __device__ page_t* allocateNewPage(pagingConfig_t* pconfig)
