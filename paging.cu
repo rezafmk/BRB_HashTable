@@ -88,6 +88,8 @@ __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 			if(pconfig->dqueue->rear != pconfig->dqueue->front)
 			{
 				page = &(pconfig->pages[pconfig->dqueue->pageIds[pconfig->dqueue->front]]);
+				page->used = 0;
+				page->next = NULL;
 				int front = pconfig->dqueue->front;
 				front ++;
 				front %= QUEUE_SIZE;
@@ -130,6 +132,11 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 
 		if(oldLock == 0)
 		{
+			if(myGroup->failed == 1)
+			{
+				atomicExch(&(myGroup->pageLock), 0);
+				return NULL;
+			}
 
 			//Re-testing if the parent page has room (because the partenPage might have changed)
 			parentPage = myGroup->parentPage;
@@ -150,15 +157,21 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 			if(newPage == NULL)
 			{
 				if(myGroup->failed != 1)
-				{
-					revokePage(parentPage, pconfig); //TODO uncomment
-					myGroup->failed = 1;
-				}
+                              	{
+                                      	myGroup->failed = 1;
+                              	        revokePage(parentPage, pconfig); //TODO uncomment
+                              	}
+
+				//myGroup->failed = 1;
+				//This has to be done by the thread that decrements the ref-counter to 0
+				//revokePage(parentPage, pconfig); //TODO uncomment
+
 				//releaseLock
 				atomicExch(&(myGroup->pageLock), 0);
 				return NULL;
 			}
 
+			//newPage->used = 0;
 			newPage->next = parentPage;
 			myGroup->parentPage = newPage;
 
@@ -168,9 +181,13 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 
 	} while(oldLock == 1);
 
+	//This assumes that the newPage is not already full, which is to be tested.
 	oldUsed = atomicAdd(&(newPage->used), size);
 
-	return (void*) ((largeInt) pconfig->dbuffer + oldUsed + newPage->id * PAGE_SIZE);
+	//if((oldUsed + size) < PAGE_SIZE)
+		return (void*) ((largeInt) pconfig->dbuffer + oldUsed + newPage->id * PAGE_SIZE);
+	//else
+		//return NULL;
 }
 
 __device__ page_t* allocateNewPage(pagingConfig_t* pconfig)
@@ -182,7 +199,6 @@ __device__ page_t* allocateNewPage(pagingConfig_t* pconfig)
 	}
 	else
 	{
-		//return NULL;
 		//atomiPop will pop an item only if `minimmQuerySize` free entry is available, NULL otherwise.
 		return popCleanPage(pconfig);
 	}
@@ -215,16 +231,18 @@ page_t* peekDirtyPage(pagingConfig_t* pconfig)
 //Executed by a separate CPU thread
 void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream)
 {
+	int i = 0;
 	while(true)
 	{
 		page_t* page;
 		if((page = peekDirtyPage(pconfig)) != NULL)
 		{
-			printf("recycling one page\n");
 			cudaMemcpyAsync((void*) ((largeInt) pconfig->hbuffer + page->id * PAGE_SIZE), (void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), PAGE_SIZE, cudaMemcpyDeviceToHost, *serviceStream);
 			cudaMemsetAsync((void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), 0, PAGE_SIZE, *serviceStream);
         		while(cudaSuccess != cudaStreamQuery(*serviceStream));
+			printf("one page recycled: %d\n", i ++);
 
+			//TODO: The following is not gonna be done on the actual page meta data on GPU memory. It is only on hpages (thus pointless)
 			page->used = 0;
 			page->next= NULL;
 

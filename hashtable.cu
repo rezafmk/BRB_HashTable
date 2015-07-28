@@ -66,6 +66,14 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 	unsigned offsetWithinGroup = hashValue % GROUP_SIZE;
 
 	bucketGroup_t* group = &(hconfig->groups[groupNo]);
+	
+	//aborting if the group is failed
+	//__threadfence();
+	if(group->failed == 1)
+		return false;
+
+	//atomicInc(&(group->refCount), INT_MAX);
+
 	hashBucket_t* bucket = group->buckets[offsetWithinGroup];
 	hashBucket_t* existingBucket;
 
@@ -95,6 +103,8 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 				{
 					//TODO reduce the base offset if not null
 					//newBucket->next = (bucket == NULL)? NULL : (hashBucket_t*) ((largeInt) bucket - (largeInt) pconfig->dbuffer);
+					//group->failed = 1;
+					//revokePage(group->parentPage, pconfig); //TODO uncomment
 					newBucket->next = bucket;
 					group->buckets[offsetWithinGroup] = newBucket;
 
@@ -114,7 +124,16 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 		}
 	} while(oldLock == 1);
 
-	//release the lock
+
+#if 0
+	int oldRefCount = atomicDec(&(group->refCount), INT_MAX);
+	//__threadfence();
+
+	if(oldRefCount == 1 && group->failed == 1)
+	{
+		revokePage(group->parentPage, pconfig); //TODO uncomment
+	}
+#endif
 	return success;
 }
 
