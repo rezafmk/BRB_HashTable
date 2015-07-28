@@ -89,11 +89,12 @@ __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 			{
 				page = &(pconfig->pages[pconfig->dqueue->pageIds[pconfig->dqueue->front]]);
 				page->used = 0;
-				page->next = NULL;
+				page->next = NULL; //OPT: This can be removed..
 				int front = pconfig->dqueue->front;
 				front ++;
 				front %= QUEUE_SIZE;
 				pconfig->dqueue->front = front;
+				
 			}
 			//Unlocking
 			atomicExch(&(pconfig->dqueue->lock), 0);
@@ -108,10 +109,7 @@ __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 //TODO: currently we don't mark a bucket group to not ask for more memory if it previously revoked its pages
 __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingConfig_t* pconfig)
 {
-	if(myGroup->failed == 1)
-		return NULL;
 	page_t* parentPage = myGroup->parentPage;
-	
 
 	unsigned oldUsed = 0;
 	if(parentPage != NULL)
@@ -132,12 +130,6 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 
 		if(oldLock == 0)
 		{
-			if(myGroup->failed == 1)
-			{
-				atomicExch(&(myGroup->pageLock), 0);
-				return NULL;
-			}
-
 			//Re-testing if the parent page has room (because the partenPage might have changed)
 			parentPage = myGroup->parentPage;
 			if(parentPage != NULL)
@@ -156,15 +148,13 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 			//If no more page exists and no page is used yet (for this bucketgroup), don't do anything
 			if(newPage == NULL)
 			{
+#if 0
 				if(myGroup->failed != 1)
                               	{
                                       	myGroup->failed = 1;
                               	        revokePage(parentPage, pconfig); //TODO uncomment
                               	}
-
-				//myGroup->failed = 1;
-				//This has to be done by the thread that decrements the ref-counter to 0
-				//revokePage(parentPage, pconfig); //TODO uncomment
+#endif
 
 				//releaseLock
 				atomicExch(&(myGroup->pageLock), 0);

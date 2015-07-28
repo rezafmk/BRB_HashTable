@@ -70,6 +70,11 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 	//aborting if the group is failed
 	if(group->failed == 1)
 		return false;
+	//------------><-------------
+	//A thread can be here while another thread (1) sets the failed attribute, (2) decrements the refCount, (3) revoke the page.
+	//------------><------------
+
+	atomicInc(group->refCount, INT_MAX);
 
 	hashBucket_t* bucket = group->buckets[offsetWithinGroup];
 	hashBucket_t* existingBucket;
@@ -113,6 +118,8 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 				}
 				else
 				{
+					group->failed = 1;
+					__threadfence();
 					success = false;
 				}
 			}
@@ -120,6 +127,12 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 			atomicExch((unsigned*) &(group->locks[offsetWithinGroup]), 0);
 		}
 	} while(oldLock == 1);
+
+	int oldRefCount = atomicDec(group->refCount, INT_MAX);
+	if(oldRefCount == 0 && !success)
+	{
+		//revokePage();
+	}
 
 	return success;
 }
