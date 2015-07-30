@@ -70,7 +70,8 @@ typedef struct
 	unsigned locks[GROUP_SIZE];
 	page_t* parentPage;
 	unsigned pageLock;
-	int failed;
+	volatile int failed;
+	unsigned refCount;
 
 } bucketGroup_t;
 

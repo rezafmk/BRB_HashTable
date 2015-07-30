@@ -67,14 +67,33 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 
 	bucketGroup_t* group = &(hconfig->groups[groupNo]);
 	
-	//aborting if the group is failed
-	if(group->failed == 1)
+	int localFailed = 0;
+	asm volatile("ld.global.cg.u32 %0, [%1];" :"=r"(localFailed) :"l"(&(group->failed)));
+	if(localFailed == 1)
 		return false;
-	//------------><-------------
-	//A thread can be here while another thread (1) sets the failed attribute, (2) decrements the refCount, (3) revoke the page.
-	//------------><------------
 
-	atomicInc(group->refCount, INT_MAX);
+	//Incrementing the `refCount`
+	atomicInc(&(group->refCount), INT_MAX);
+
+	//Corner case: checking the `failed` again to see if it is set now
+	//Note: failed is volatile, but we might need inline assembly to avoid compiler optimization on it.
+
+	asm volatile("ld.global.cg.u32 %0, [%1];" :"=r"(localFailed) :"l"(&(group->failed)));
+	if(localFailed == 1)
+	{
+		if(atomicDec(&(group->refCount), INT_MAX) == 1)
+		{
+			long long unsigned pageAddress = (long long unsigned) group->parentPage;
+			page_t* oldPage = (page_t*) atomicCAS((long long unsigned*) &(group->parentPage), pageAddress, NULL);
+			printf("revoked at 1\n");
+			revokePage(oldPage, pconfig);
+		}
+		return false;
+	}
+
+	//------------><-------------
+	//A thread can be here while another thread (1) sets the failed attribute, (2) decrements the refCount, (3) revokes the page.
+	//------------><------------
 
 	hashBucket_t* bucket = group->buckets[offsetWithinGroup];
 	hashBucket_t* existingBucket;
@@ -118,8 +137,7 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 				}
 				else
 				{
-					group->failed = 1;
-					__threadfence();
+					atomicExch((unsigned*) &(group->failed), 1);
 					success = false;
 				}
 			}
@@ -128,10 +146,12 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 		}
 	} while(oldLock == 1);
 
-	int oldRefCount = atomicDec(group->refCount, INT_MAX);
-	if(oldRefCount == 0 && !success)
+	int oldRefCount = atomicDec(&(group->refCount), INT_MAX);
+	if(oldRefCount == 1 && group->failed == 1)
 	{
-		//revokePage();
+		long long unsigned pageAddress = (long long unsigned) group->parentPage;
+		page_t* oldPage = (page_t*) atomicCAS((long long unsigned*) &(group->parentPage), pageAddress, NULL);
+		revokePage(oldPage, pconfig);
 	}
 
 	return success;
