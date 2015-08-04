@@ -58,6 +58,7 @@ void pushCleanPage(page_t* page, pagingConfig_t* pconfig)
 //TODO: I assume the queue will not be full which is a faulty assumption.
 __device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig)
 {
+	//Make this lock-free, doable
 	unsigned oldLock = 1;
 	do
 	{
@@ -78,32 +79,34 @@ __device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig)
 //Run by GPU
 __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 {
-	page_t* page = NULL;
-	unsigned oldLock = 1;
+	unsigned* frontAddress = (unsigned*) &(pconfig->dqueue->front);
+	unsigned* rearAddress = (unsigned*) &(pconfig->dqueue->rear);
+	unsigned oldFront = *frontAddress;
+	unsigned assume;
+
+	if(*rearAddress == oldFront)
+		return NULL;
+
 	do
 	{
-		oldLock = atomicExch(&(pconfig->dqueue->lock), 1);
-		if(oldLock == 0)
+		assume = oldFront;
+		if(*rearAddress != oldFront)
 		{
-			if(pconfig->dqueue->rear != pconfig->dqueue->front)
-			{
-				page = &(pconfig->pages[pconfig->dqueue->pageIds[pconfig->dqueue->front]]);
-				page->used = 0;
-				page->next = NULL; //OPT: This can be removed..
-				int front = pconfig->dqueue->front;
-				front ++;
-				front %= QUEUE_SIZE;
-				pconfig->dqueue->front = front;
-				
-			}
-			//Unlocking
-			atomicExch(&(pconfig->dqueue->lock), 0);
+			oldFront = atomicCAS(frontAddress, assume, oldFront + 1);	
 		}
-	} while(oldLock == 1);
+		else
+		{
+			return NULL;
+		}
+		
+	} while(assume != oldFront);
 
+	page_t* page = &(pconfig->pages[pconfig->dqueue->pageIds[oldFront % QUEUE_SIZE]]);
+	page->used = 0;
+	page->next = NULL; //OPT: This can be removed..
 	return page;
-
 }
+
 
 
 //TODO: currently we don't mark a bucket group to not ask for more memory if it previously revoked its pages
