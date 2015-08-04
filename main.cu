@@ -146,6 +146,11 @@ int main(int argc, char** argv)
 	
 	//==========================================================================//
 	
+	 struct timeval partial_start, partial_end;//, exec_start, exec_end;
+        time_t sec;
+        time_t ms;
+        time_t diff;
+	
 
 
 	//====================== Calling the kernel ================================//
@@ -153,6 +158,8 @@ int main(int argc, char** argv)
 	printf("@INFO: calling kernel\n");
 	errR = cudaGetLastError();
 	printf("@REPORT: CUDA Error before calling the kernel: %s\n", cudaGetErrorString(errR));
+
+        gettimeofday(&partial_start, NULL);
 
 	kernel<<<grid, block, 0, execStream>>>(drecords, numRecords, drecordSizes, numThreads, dpconfig, dhconfig, dstatus);
 
@@ -168,6 +175,14 @@ int main(int argc, char** argv)
 	while(cudaErrorNotReady == cudaStreamQuery(execStream))
 		usleep(300);	
 	cudaThreadSynchronize();
+
+	gettimeofday(&partial_end, NULL);
+        sec = partial_end.tv_sec - partial_start.tv_sec;
+        ms = partial_end.tv_usec - partial_start.tv_usec;
+        diff = sec * 1000000 + ms;
+
+        printf("\n%10s:\t\t%0.0f\n", "Total time", (double)((double)diff/1000.0));
+
 
 	errR = cudaGetLastError();
 	printf("@REPORT: CUDA Error at the end of the program: %s\n", cudaGetErrorString(errR));
