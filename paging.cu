@@ -58,6 +58,7 @@ void pushCleanPage(page_t* page, pagingConfig_t* pconfig)
 //TODO: I assume the queue will not be full which is a faulty assumption.
 __device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig)
 {
+	//Make this lock-free, doable
 	unsigned oldLock = 1;
 	do
 	{
@@ -78,38 +79,40 @@ __device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig)
 //Run by GPU
 __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 {
-	page_t* page = NULL;
-	unsigned oldLock = 1;
+	unsigned* frontAddress = (unsigned*) &(pconfig->dqueue->front);
+	unsigned* rearAddress = (unsigned*) &(pconfig->dqueue->rear);
+	unsigned oldFront = *frontAddress;
+	unsigned assume;
+
+	if(*rearAddress == oldFront)
+		return NULL;
+
 	do
 	{
-		oldLock = atomicExch(&(pconfig->dqueue->lock), 1);
-		if(oldLock == 0)
+		assume = oldFront;
+		if(*rearAddress != oldFront)
 		{
-			if(pconfig->dqueue->rear != pconfig->dqueue->front)
-			{
-				page = &(pconfig->pages[pconfig->dqueue->pageIds[pconfig->dqueue->front]]);
-				int front = pconfig->dqueue->front;
-				front ++;
-				front %= QUEUE_SIZE;
-				pconfig->dqueue->front = front;
-			}
-			//Unlocking
-			atomicExch(&(pconfig->dqueue->lock), 0);
+			oldFront = atomicCAS(frontAddress, assume, oldFront + 1);	
 		}
-	} while(oldLock == 1);
+		else
+		{
+			return NULL;
+		}
+		
+	} while(assume != oldFront);
 
+	page_t* page = &(pconfig->pages[pconfig->dqueue->pageIds[oldFront % QUEUE_SIZE]]);
+	page->used = 0;
+	page->next = NULL; //OPT: This can be removed..
 	return page;
-
 }
+
 
 
 //TODO: currently we don't mark a bucket group to not ask for more memory if it previously revoked its pages
 __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingConfig_t* pconfig)
 {
-	if(myGroup->failed == 1)
-		return NULL;
 	page_t* parentPage = myGroup->parentPage;
-	
 
 	unsigned oldUsed = 0;
 	if(parentPage != NULL)
@@ -130,7 +133,6 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 
 		if(oldLock == 0)
 		{
-
 			//Re-testing if the parent page has room (because the partenPage might have changed)
 			parentPage = myGroup->parentPage;
 			if(parentPage != NULL)
@@ -149,16 +151,12 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 			//If no more page exists and no page is used yet (for this bucketgroup), don't do anything
 			if(newPage == NULL)
 			{
-				if(myGroup->failed != 1)
-				{
-					revokePage(parentPage, pconfig); //TODO uncomment
-					myGroup->failed = 1;
-				}
 				//releaseLock
 				atomicExch(&(myGroup->pageLock), 0);
 				return NULL;
 			}
 
+			//newPage->used = 0;
 			newPage->next = parentPage;
 			myGroup->parentPage = newPage;
 
@@ -168,9 +166,13 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 
 	} while(oldLock == 1);
 
+	//This assumes that the newPage is not already full, which is to be tested.
 	oldUsed = atomicAdd(&(newPage->used), size);
 
-	return (void*) ((largeInt) pconfig->dbuffer + oldUsed + newPage->id * PAGE_SIZE);
+	//if((oldUsed + size) < PAGE_SIZE)
+		return (void*) ((largeInt) pconfig->dbuffer + oldUsed + newPage->id * PAGE_SIZE);
+	//else
+		//return NULL;
 }
 
 __device__ page_t* allocateNewPage(pagingConfig_t* pconfig)
@@ -182,7 +184,6 @@ __device__ page_t* allocateNewPage(pagingConfig_t* pconfig)
 	}
 	else
 	{
-		//return NULL;
 		//atomiPop will pop an item only if `minimmQuerySize` free entry is available, NULL otherwise.
 		return popCleanPage(pconfig);
 	}
@@ -215,16 +216,18 @@ page_t* peekDirtyPage(pagingConfig_t* pconfig)
 //Executed by a separate CPU thread
 void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream)
 {
+	int i = 0;
 	while(true)
 	{
 		page_t* page;
 		if((page = peekDirtyPage(pconfig)) != NULL)
 		{
-			printf("recycling one page\n");
 			cudaMemcpyAsync((void*) ((largeInt) pconfig->hbuffer + page->id * PAGE_SIZE), (void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), PAGE_SIZE, cudaMemcpyDeviceToHost, *serviceStream);
 			cudaMemsetAsync((void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), 0, PAGE_SIZE, *serviceStream);
         		while(cudaSuccess != cudaStreamQuery(*serviceStream));
+			printf("one page recycled: %d\n", i ++);
 
+			//TODO: The following is not gonna be done on the actual page meta data on GPU memory. It is only on hpages (thus pointless)
 			page->used = 0;
 			page->next= NULL;
 

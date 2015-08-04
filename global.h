@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <time.h>
+#include <sys/time.h>
 
 #define PAGE_SIZE (1 << 12)
 #define GROUP_SIZE 64
@@ -70,7 +72,8 @@ typedef struct
 	unsigned locks[GROUP_SIZE];
 	page_t* parentPage;
 	unsigned pageLock;
-	int failed;
+	volatile int failed;
+	unsigned refCount;
 
 } bucketGroup_t;
 
