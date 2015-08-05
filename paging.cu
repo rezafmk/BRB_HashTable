@@ -58,23 +58,28 @@ void pushCleanPage(page_t* page, pagingConfig_t* pconfig)
 //TODO: I assume the queue will not be full which is a faulty assumption.
 __device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig)
 {
-	//Make this lock-free, doable
-	unsigned oldLock = 1;
+	unsigned* dirtyRearAddress = (unsigned*) &(pconfig->dqueue->dirtyRear);
+	unsigned* frontAddress = (unsigned*) &(pconfig->dqueue->front);
+	unsigned oldDirtyRear = *dirtyRearAddress;
+	unsigned assume;
+	bool success;
 	do
 	{
-		oldLock = atomicExch(&(pconfig->dqueue->lock), 1);
-		if(oldLock == 0)
-		{
-			//FIXME: this assumes we never have a full queue
-			pconfig->dqueue->pageIds[pconfig->dqueue->dirtyRear] = page->id;
-			pconfig->dqueue->dirtyRear ++;
-			pconfig->dqueue->dirtyRear %= QUEUE_SIZE;
+		success = false;
+		assume = oldDirtyRear;
 
-			//Unlocking
-			atomicExch(&(pconfig->dqueue->lock), 0);
+		// Only push if there's a slot available
+		if(((oldDirtyRear + 1) % QUEUE_SIZE) != (*frontAddress % QUEUE_SIZE))
+		{
+			oldDirtyRear = atomicCAS(dirtyRearAddress, assume, oldDirtyRear + 1);
+			success = true;
 		}
-	} while(oldLock == 1);
+	} while(assume != oldDirtyRear);
+
+	if(success)
+		pconfig->dqueue->pageIds[oldDirtyRear % QUEUE_SIZE] = page->id;
 }
+
 
 //Run by GPU
 __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
@@ -225,7 +230,9 @@ void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream)
 			cudaMemcpyAsync((void*) ((largeInt) pconfig->hbuffer + page->id * PAGE_SIZE), (void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), PAGE_SIZE, cudaMemcpyDeviceToHost, *serviceStream);
 			cudaMemsetAsync((void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), 0, PAGE_SIZE, *serviceStream);
         		while(cudaSuccess != cudaStreamQuery(*serviceStream));
-			printf("one page recycled: %d\n", i ++);
+
+			int queueSize = pconfig->queue->dirtyRear - pconfig->queue->front;
+			printf("one page recycled: %d [queue size: %d]\n", i ++, queueSize);
 
 			//TODO: The following is not gonna be done on the actual page meta data on GPU memory. It is only on hpages (thus pointless)
 			page->used = 0;
@@ -234,7 +241,7 @@ void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream)
 			//[Atomically] advancing rear..
 			int tempRear = pconfig->queue->rear;
 			tempRear ++;
-			tempRear %= QUEUE_SIZE;
+			//tempRear %= QUEUE_SIZE;
 			pconfig->queue->rear = tempRear;
 
 		}

@@ -8,11 +8,10 @@
 #include <sys/time.h>
 
 #define PAGE_SIZE (1 << 12)
-#define GROUP_SIZE 64
+#define GROUP_SIZE (PAGE_SIZE / 64)
 #define ALIGNMET 8
 
-#define PAGE_SIZE (1 << 12)
-#define QUEUE_SIZE 200
+#define QUEUE_SIZE 500
 #define HOST_BUFFER_SIZE (1 << 31)
 
 typedef long long int largeInt;
