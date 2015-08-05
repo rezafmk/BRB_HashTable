@@ -57,6 +57,60 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 	return bucket;
 }
 
+__device__ bool atomicAttemptIncRefCount(int* refCount)
+{
+	int oldRefCount = *refCount;
+	int assume;
+	bool success;
+	do
+	{
+		success = false;
+		assume = oldRefCount;
+		if(oldRefCount >= 0)
+		{
+			oldRefCount = (int) atomicCAS((unsigned*) refCount, (unsigned) oldRefCount, oldRefCount + 1);
+			success = true;
+		}
+	} while(oldRefCount != assume);
+
+	return success;
+}
+
+__device__ int atomicDecRefCount(int* refCount)
+{
+	int oldRefCount = *refCount;
+	int assume;
+	do
+	{
+		assume = oldRefCount;
+		if(oldRefCount >= 0) // During normal times
+		{
+			oldRefCount = (int) atomicCAS((unsigned*) refCount, (unsigned) oldRefCount, (unsigned) (oldRefCount - 1));
+		}
+		else // During failure
+		{
+			oldRefCount = (int) atomicCAS((unsigned*) refCount, (unsigned) oldRefCount, (unsigned) (oldRefCount + 1));
+		}
+
+	} while(oldRefCount != assume);
+
+	return oldRefCount;
+}
+
+__device__ void atomicNegateRefCount(int* refCount)
+{
+	int oldRefCount = *refCount;
+	int assume;
+	do
+	{
+		assume = oldRefCount;
+		if(oldRefCount >= 0)
+			oldRefCount = (int) atomicCAS((unsigned*) refCount, (unsigned) oldRefCount, -oldRefCount);
+
+	} while(oldRefCount != assume);
+	
+}
+
 __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSize, hashtableConfig_t* hconfig, pagingConfig_t* pconfig)
 {
 	bool success = true;
@@ -67,33 +121,9 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 
 	bucketGroup_t* group = &(hconfig->groups[groupNo]);
 	
-	int localFailed = 0;
-	asm volatile("ld.global.cg.u32 %0, [%1];" :"=r"(localFailed) :"l"(&(group->failed)));
-	if(localFailed == 1)
+	// Incrementing the `refCount`. If refCount was negative (which means group is failed), return
+	if(atomicAttemptIncRefCount(&(group->refCount)) != true)
 		return false;
-
-	//Incrementing the `refCount`
-	atomicInc(&(group->refCount), INT_MAX);
-
-	//Corner case: checking the `failed` again to see if it is set now
-	//Note: failed is volatile, but we might need inline assembly to avoid compiler optimization on it.
-
-	asm volatile("ld.global.cg.u32 %0, [%1];" :"=r"(localFailed) :"l"(&(group->failed)));
-	if(localFailed == 1)
-	{
-		if(atomicDec(&(group->refCount), INT_MAX) == 1)
-		{
-			long long unsigned pageAddress = (long long unsigned) group->parentPage;
-			page_t* oldPage = (page_t*) atomicCAS((long long unsigned*) &(group->parentPage), pageAddress, NULL);
-			printf("revoked at 1\n");
-			revokePage(oldPage, pconfig);
-		}
-		return false;
-	}
-
-	//------------><-------------
-	//A thread can be here while another thread (1) sets the failed attribute, (2) decrements the refCount, (3) revokes the page.
-	//------------><------------
 
 	hashBucket_t* bucket = group->buckets[offsetWithinGroup];
 	hashBucket_t* existingBucket;
@@ -137,7 +167,7 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 				}
 				else
 				{
-					atomicExch((unsigned*) &(group->failed), 1);
+					atomicNegateRefCount(&(group->refCount));
 					success = false;
 				}
 			}
@@ -146,8 +176,8 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 		}
 	} while(oldLock == 1);
 
-	int oldRefCount = atomicDec(&(group->refCount), INT_MAX);
-	if(oldRefCount == 1 && group->failed == 1)
+	int oldRefCount = atomicDecRefCount(&(group->refCount));
+	if(oldRefCount == -1)
 	{
 		long long unsigned pageAddress = (long long unsigned) group->parentPage;
 		page_t* oldPage = (page_t*) atomicCAS((long long unsigned*) &(group->parentPage), pageAddress, NULL);

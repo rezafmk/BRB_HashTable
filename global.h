@@ -71,7 +71,7 @@ typedef struct
 	page_t* parentPage;
 	unsigned pageLock;
 	volatile int failed;
-	unsigned refCount;
+	int refCount;
 
 } bucketGroup_t;
 
@@ -100,4 +100,7 @@ __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets);
 __device__ void resolveSameKeyAddition(void const* key, void* value, void* oldValue);
 __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize);
 __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSize, hashtableConfig_t* hconfig, pagingConfig_t* pconfig);
+__device__ bool atomicAttemptIncRefCount(int* refCount);
+__device__ int atomicDecRefCount(int* refCount);
+__device__ void atomicNegateRefCount(int* refCount);
 #endif
