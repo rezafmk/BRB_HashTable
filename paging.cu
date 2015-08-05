@@ -1,13 +1,13 @@
 #include "global.h"
 
-void initPaging(largeInt availableGPUMemory, int minimumQueueSize, pagingConfig_t* pconfig)
+void initPaging(largeInt availableGPUMemory, pagingConfig_t* pconfig)
 {
 
 	initQueue(pconfig);
 	printf("@INFO: done doing initQueue\n");
 	pconfig->totalNumPages = availableGPUMemory / PAGE_SIZE;
 	pconfig->initialPageAssignedCounter = 0;
-	pconfig->initialPageAssignedCap = pconfig->totalNumPages - minimumQueueSize;
+	pconfig->initialPageAssignedCap = pconfig->totalNumPages;
 
 	cudaMalloc((void**) &(pconfig->dbuffer), pconfig->totalNumPages * PAGE_SIZE);
 	cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
@@ -28,13 +28,6 @@ void initPaging(largeInt availableGPUMemory, int minimumQueueSize, pagingConfig_
 	cudaMalloc((void**) &(pconfig->pages), pconfig->totalNumPages * sizeof(page_t));
 	cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
 
-	pconfig->minimumQueueSize = minimumQueueSize;
-	printf("@INFO: Adding some clean pages to queue\n");
-	//Adding last free pages to queue
-	for(int i = pconfig->totalNumPages - minimumQueueSize; i < pconfig->totalNumPages; i ++)
-	{
-		pushCleanPage(&(pconfig->hpages[i]), pconfig);
-	}
 	printf("@INFO: done doing initPaging\n");
 }
 

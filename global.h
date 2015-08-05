@@ -50,7 +50,6 @@ typedef struct
 
 	int initialPageAssignedCounter;
 	int initialPageAssignedCap;
-	int minimumQueueSize;
 } pagingConfig_t;
 
 //================ hashing structures ================//
@@ -84,7 +83,7 @@ typedef struct
 
 
 
-void initPaging(largeInt availableGPUMemory, int minimumQueueSize, pagingConfig_t* pconfig);
+void initPaging(largeInt availableGPUMemory, pagingConfig_t* pconfig);
 void initQueue(pagingConfig_t* pconfig);
 void pushCleanPage(page_t* page, pagingConfig_t* pconfig);
 __device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig);

@@ -114,12 +114,11 @@ int main(int argc, char** argv)
 
 	//============ initializing the hash table and page table ==================//
 	largeInt availableGPUMemory = (1 << 28);
-	unsigned minimumQueueSize = 20;
 	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
 	memset(pconfig, 0, sizeof(pagingConfig_t));
 	
 	printf("@INFO: calling initPaging\n");
-	initPaging(availableGPUMemory, minimumQueueSize, pconfig);
+	initPaging(availableGPUMemory, pconfig);
 
 	hashtableConfig_t* hconfig = (hashtableConfig_t*) malloc(sizeof(hashtableConfig_t));
 	printf("@INFO: calling hashtableInit\n");
