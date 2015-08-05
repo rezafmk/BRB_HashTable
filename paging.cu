@@ -6,6 +6,7 @@ void initPaging(largeInt availableGPUMemory, pagingConfig_t* pconfig)
 	initQueue(pconfig);
 	printf("@INFO: done doing initQueue\n");
 	pconfig->totalNumPages = availableGPUMemory / PAGE_SIZE;
+	printf("@INFO: total number of pages: %d [each %dKB]\n", pconfig->totalNumPages, (PAGE_SIZE / (1 << 10)));
 	pconfig->initialPageAssignedCounter = 0;
 	pconfig->initialPageAssignedCap = pconfig->totalNumPages;
 
@@ -39,14 +40,6 @@ void initQueue(pagingConfig_t* pconfig)
 	cudaHostGetDevicePointer((void**) &(pconfig->dqueue), pconfig->queue, 0);
 }
 
-//This is called only by CPU thread, so needs no synchronization (unless run by multiple threads)
-void pushCleanPage(page_t* page, pagingConfig_t* pconfig)
-{
-	pconfig->queue->pageIds[pconfig->queue->rear] = page->id;
-	pconfig->queue->rear ++;
-	pconfig->queue->rear %= QUEUE_SIZE;
-	pconfig->queue->dirtyRear = pconfig->queue->rear;
-}
 
 //TODO: I assume the queue will not be full which is a faulty assumption.
 __device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig)

@@ -25,7 +25,6 @@ __global__ void kernel(char* records, int numRecords, int* recordSizes, int numT
 		int recordSize = recordSizes[i];
 		recordSize = (recordSize % 8 == 0)? recordSize : (recordSize + (8 - (recordSize % 8)));
 		largeInt value = 1;
-
 		if(addToHashtable((void*) record, recordSize, (void*) &value, sizeof(largeInt), hconfig, pconfig) == true)
 			status[index * 2] ++;
 		else
