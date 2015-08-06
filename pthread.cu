@@ -3,13 +3,14 @@
 #include <pthread.h>
 #include <time.h>
 #include <sys/time.h>
+#include <tcmalloc.h>
 
 typedef long long int largeInt;
 
 #define RECORD_LENGTH 64
 #define NUM_BUCKETS 1000000
 #define ALIGNMET 8
-#define NUMTHREADS 8
+#define NUMTHREADS 16
 
 typedef struct hashEntry_t
 {
@@ -113,7 +114,7 @@ bool addToHashtable(hashBucket_t* hashTable, char* key, int keySize, int value, 
 	}
 	else
 	{
-		hashEntry_t* newEntry = (hashEntry_t*) malloc(sizeof(hashEntry_t));
+		hashEntry_t* newEntry = (hashEntry_t*) tc_malloc(sizeof(hashEntry_t));
 
 		if(newEntry != NULL)
 		{
@@ -147,9 +148,14 @@ void* kernel(void* arg)//char* records, int numRecords, int* recordSizes, int nu
 	hashBucket_t* hashTable = argument->hashTable;
 	int* status = argument->status;
 	int index = argument->index;
+
+	int chunkSize = numRecords / numThreads;
+	
+	int start = chunkSize * index;
+	int end = start + chunkSize;
 	
 	
-	for(int i = index; i < numRecords; i += numThreads)
+	for(int i = start; i < end; i += 1)
 	{
 		char* record = &records[i * RECORD_LENGTH];
 		int recordSize = recordSizes[i];

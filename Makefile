@@ -5,6 +5,6 @@ cuda:
 debug:
 	nvcc -g -G -o bigdata -O0 -Xptxas -O0 -arch=sm_30 -rdc=true main.cu paging.cu hashtable.cu 
 pthread:
-	nvcc -o bigdata -arch=sm_30 pthread.cu 
+	nvcc -o bigdata -arch=sm_30 pthread.cu -ltcmalloc -I/usr/include/google/
 clean:
 	rm -f bigdata
