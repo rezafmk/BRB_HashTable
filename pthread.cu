@@ -8,14 +8,10 @@ typedef long long int largeInt;
 
 #define RECORD_LENGTH 64
 #define NUM_BUCKETS 1000000
+#define ALIGNMET 8
+#define NUMTHREADS 8
 
-typedef struct
-{
-	pagingConfig_t* pconfig;
-	cudaStream_t* serviceStream;
-} dataPackage_t;
-
-typedef struct
+typedef struct hashEntry_t
 {
 	struct hashEntry_t* next;
 	int value;	
@@ -27,6 +23,19 @@ typedef struct
 	hashEntry_t* entry;
 	unsigned lock;
 } hashBucket_t;
+
+
+typedef struct
+{
+	char* records;
+	hashBucket_t* hashTable;
+	int* recordSizes;
+	int* status;
+	int numRecords;
+	int numThreads;
+	int index;
+
+} dataPackage_t;
 
 
 unsigned hashFunc(char* str, int len, int numBuckets)
@@ -47,11 +56,11 @@ unsigned hashFunc(char* str, int len, int numBuckets)
         return hash % numBuckets;
 }
 
-hashBucket_t* containsKey(hashBucket_t* bucket, char* key, int keySize)
+hashEntry_t* containsKey(hashEntry_t* entry, char* key, int keySize)
 {
-	while(bucket != NULL)
+	while(entry != NULL)
 	{
-		char* oldKey = (char*) bucket->key;
+		char* oldKey = (char*) entry->key;
 		bool success = true;
 		//OPTIMIZE: do the comparisons 8-byte by 8-byte
 		for(int i = 0; i < keySize; i ++)
@@ -65,10 +74,10 @@ hashBucket_t* containsKey(hashBucket_t* bucket, char* key, int keySize)
 		if(success)
 			break;
 
-		bucket = bucket->next;
+		entry = entry->next;
 	}
 
-	return bucket;
+	return entry;
 
 }
 
@@ -77,7 +86,7 @@ hashBucket_t* containsKey(hashBucket_t* bucket, char* key, int keySize)
 bool addToHashtable(hashBucket_t* hashTable, char* key, int keySize, int value, int valueSize)
 {
 	bool success = true;
-	unsigned hashValue = hashFunc((char*) key, keySize, hconfig->numBuckets);
+	unsigned hashValue = hashFunc((char*) key, keySize, NUM_BUCKETS);
 
 	
 	hashBucket_t* bucket = &hashTable[hashValue];
@@ -131,11 +140,12 @@ bool addToHashtable(hashBucket_t* hashTable, char* key, int keySize, int value, 
 void* kernel(void* arg)//char* records, int numRecords, int* recordSizes, int numThreads, pagingConfig_t* pconfig, hashtableConfig_t* hconfig, int* status)
 {
 	dataPackage_t* argument = (dataPackage_t*) arg;
-	char* recrods = argument->records;
+	char* records = argument->records;
 	int numRecords = argument->numRecords;
 	int* recordSizes  = argument->recordSizes;
 	int numThreads = argument->numThreads;
-	hashEntry_t* hashTable = agument->hashTable;
+	hashBucket_t* hashTable = argument->hashTable;
+	int* status = argument->status;
 	int index = argument->index;
 	
 	
@@ -145,26 +155,24 @@ void* kernel(void* arg)//char* records, int numRecords, int* recordSizes, int nu
 		int recordSize = recordSizes[i];
 		recordSize = (recordSize % 8 == 0)? recordSize : (recordSize + (8 - (recordSize % 8)));
 		largeInt value = 1;
-		if(addToHashtable((void*) record, recordSize, (void*) &value, sizeof(largeInt), hconfig, pconfig) == true)
+		if(addToHashtable(hashTable, record, recordSize, value, 4) == true)
 			status[index * 2] ++;
 		else
 			status[index * 2 + 1] ++;
 	}
+	return NULL;
 }
 
 
 int main(int argc, char** argv)
 {
-	cudaError_t errR;
 	int numRecords = 4500000;
 	if(argc == 2)
 	{
 		numRecords = atoi(argv[1]);
 	}	
 
-	dim3 grid(8, 1, 1);
-	dim3 block(512, 1, 1);
-	int numThreads = grid.x * block.x;
+	int numThreads = NUMTHREADS;
 	numRecords = (numRecords % numThreads == 0)? numRecords : (numRecords + (numThreads - (numRecords % numThreads)));
 	printf("@INFO: Number of records: %d (%d per thread)\n", numRecords, numRecords / numThreads);
 	
@@ -217,7 +225,7 @@ int main(int argc, char** argv)
 
 	//==========================================================================//
 	
-	 struct timeval partial_start, partial_end;//, exec_start, exec_end;
+	struct timeval partial_start, partial_end;//, exec_start, exec_end;
         time_t sec;
         time_t ms;
         time_t diff;
@@ -229,14 +237,27 @@ int main(int argc, char** argv)
 
 	//Spawn the pthread functions
 
+	gettimeofday(&partial_start, NULL);
 	
-	pthread_t thread;
-	dataPackage_t argument;
+	pthread_t thread[NUMTHREADS];
+	dataPackage_t argument[NUMTHREADS];
 
-	argument.pconfig = pconfig;
-	argument.serviceStream = &serviceStream;
+	for(int i = 0; i < NUMTHREADS; i ++)
+	{
+		argument[i].records = records;
+		argument[i].numRecords = numRecords;
+		argument[i].hashTable = hashTable;
+		argument[i].status = status;
+		argument[i].index = i;
+		argument[i].recordSizes = recordSizes;
+		argument[i].numThreads = NUMTHREADS;
 
-	pthread_create(&thread, NULL, recyclePages, &argument);
+		pthread_create(&thread[i], NULL, kernel, &argument[i]);
+	}
+
+
+	for(int i = 0; i < NUMTHREADS; i ++)
+		pthread_join(thread[i], NULL);
 
 
 	//Join threads here
