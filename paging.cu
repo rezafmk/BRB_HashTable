@@ -92,6 +92,7 @@ __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 		
 	} while(assume != oldFront);
 
+	printf("providing one page\n");
 	page_t* page = &(pconfig->pages[pconfig->dqueue->pageIds[oldFront % QUEUE_SIZE]]);
 	page->used = 0;
 	page->next = NULL; //OPT: This can be removed..

@@ -31,6 +31,7 @@ __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
 __device__ void resolveSameKeyAddition(void const* key, void* value, void* oldValue)
 {
 	*((int*) oldValue) += 1;
+	printf("oldValue: %d\n", *((int*) oldValue));
 }
 
 __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize)

@@ -7,7 +7,7 @@
 #include <time.h>
 #include <sys/time.h>
 
-#define PAGE_SIZE (1 << 17)
+#define PAGE_SIZE (1 << 18)
 #define GROUP_SIZE (PAGE_SIZE / 64)
 #define ALIGNMET 8
 
