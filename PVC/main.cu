@@ -10,9 +10,6 @@
 #define NUMHASHROWS 10000000
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 
-#define OPTIMIZED 1
-typedef uint4 cacheType;
-
 __device__ inline void addToHashTable(char* word, int wordSize, hashEntry* hashTable, int numBuckets, int hIndex, volatile unsigned int* volatile locks)
 {
 	int oldValue = 1;
@@ -124,14 +121,6 @@ __global__ void wordCountKernelMultipass(
 	
 	int startWord = start;
 	bool inWord = true;
-
-#ifdef OPTIMIZED
-	//====================== Cache stuff ============================//
-	__shared__ uint4 cache[BLOCKSIZE];
-	char* myCache = (char*) &cache[(threadIdx.x % BLOCKSIZE)];
-	largeInt addrLocator1 = 0;
-	//===============================================================//
-#endif
 
 
 	__shared__ int addrDis1[PATTERNSIZE * BLOCKSIZE];
@@ -280,21 +269,12 @@ __global__ void wordCountKernelMultipass(
 			int loopCounter = 0;
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
-#ifdef OPTIMIZED
-				if(step == 0)
-					*((cacheType*) myCache) = *((cacheType*) &((textData + (s * iterations * DATAITEMSIZE * (blockDim.x / 2) * gridDim.x))[genericCounter + step]));
-				//((char*) myCache)[step] = (textData + (s * iterations * DATAITEMSIZE * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
-				char c = myCache[step];
-#else
 				char c = (textData + (s * iterations * DATAITEMSIZE * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
-#endif
 
 				step ++;
 				genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
 				step %= COALESCEITEMSIZE;
 
-				//char c = textData[s][textDataCounter];
-				//textDataCounter ++;
 				myNumbers[index] ++;
 
 				if((c < 'a' || c > 'z') && inWord)
@@ -325,48 +305,6 @@ __global__ void wordCountKernelMultipass(
 		__syncthreads();
 	}
 }
-
-
-
-#if 0
-
-__global__ void wordCountKernel(char* data, largeInt* startIndexes, hashEntry* hashTable, unsigned int* locks)
-{
-
-	int index = TID;
-	ptr_t start = startIndexes[index];
-	ptr_t end = startIndexes[index + 1];
-	char myWord[WORDSIZELIMIT];
-	int myWordCounter = 0;
-	
-	int startWord = start;
-
-	
-	for(int i = start; i < end; i ++)
-	{
-		char c = data[i];
-		if(c < 'a' || c > 'z')
-		{
-			myWordCounter = 0;
-			int length = i - startWord;
-			if(length > 5 && length <= WORDSIZELIMIT)
-			{
-				addToHashTable(myWord, length, hashTable, locks);
-			}
-
-			do
-			{
-				i ++;
-				c = data[i];
-			} while(c < 'a' || c > 'z');
-
-			startWord = i;
-		}
-
-		myWord[myWordCounter ++] = c;
-	}
-}
-#endif
 
 int countToNextWord(char* start)
 {
