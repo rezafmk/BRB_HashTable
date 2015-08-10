@@ -1,15 +1,20 @@
-FLAGS= -g -O3
-GPUDoubleBuffering=main.cu
-GPUL2Version=mainL2.cu
+GPUMultiPass=multiPass.cu
+FLAGS= -g -O3 -Xptxas -v -Xptxas --maxrregcount=32
+GPUNormal=doubleBuffering.cu
+CPUPthread=pthread.cu
+GPUDoubleBuffering=doubleBuffering.cu
 
 
-default:normal
+default:multipass
 
-normal:
-	nvcc $(FLAGS) -arch=sm_30 -o bigdata $(GPUDoubleBuffering) $(Libs) $(Includes)
+multipass:
+	nvcc $(FLAGS) -arch=sm_20 -o bigdata $(GPUMultiPass) $(Libs) $(Includes)
 
-L2version:
-	nvcc $(FLAGS) -arch=sm_30 -o bigdata $(GPUL2Version) $(Libs) $(Includes)
+doubleBuffering:
+	nvcc $(FLAGS) -arch=sm_20 -o bigdata $(GPUDoubleBuffering) $(Libs) $(Includes)
 	
+pthread:
+	nvcc -O3 -arch=sm_20 -o bigdata $(CPUPthread) $(Libs) $(Includes)
+
 clean:
-	rm -f bigdata
+	rm -f bigdata hash normal
