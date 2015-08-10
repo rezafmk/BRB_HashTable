@@ -10,7 +10,7 @@ typedef long long int largeInt;
 #define RECORD_LENGTH 64
 #define NUM_BUCKETS 1000000
 #define ALIGNMET 8
-#define NUMTHREADS 16
+#define NUMTHREADS 8
 
 typedef struct hashEntry_t
 {
