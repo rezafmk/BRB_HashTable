@@ -43,7 +43,7 @@ int main(int argc, char **argv)
 	{
 		FILE *fp = fopen(fileName, "w+");
 
-		char** names = generateNames(uniqueNameNum, 12, 48);
+		char** names = generateNames(uniqueNameNum, 12, 47);
 		
 		int i;
 		for (i = 0; i < recNum; i++)

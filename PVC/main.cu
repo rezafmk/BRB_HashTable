@@ -197,11 +197,15 @@ __global__ void wordCountKernelMultipass(
 					char c = (textData + (s * iterations * RECORD_SIZE * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
 					//URL[j] = c;
 					sum += (int) c;
+					//if(index == 100)
+						//printf("%c", c);
 
 					step ++;
 					genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
 					step %= COALESCEITEMSIZE;
 				}
+				//if(index == 100)
+					//printf("\n====\n");
 				//hashTable.add(URL, url_size);
 				myNumbers[index] += sum;
 
@@ -271,14 +275,7 @@ void* copyMethodPattern(void* arg)
 	hostBuffer[0] = pkg->hostBuffer[0];
 
 	//for(int k = 0; k < (BLOCKSIZE / WARPSIZE); k ++)
-	struct timeval partial_start, partial_end;//, exec_start, exec_end;
-	time_t sec;
-	time_t ms;
-	time_t diff;
 
-	//int copies = 0;
-
-	gettimeofday(&partial_start, NULL);
 
 	for(int k = warpStart; k < warpEnd; k ++)
 	{
@@ -308,6 +305,11 @@ void* copyMethodPattern(void* arg)
 				for(int m = 0; m < RECORD_SIZE / COPYSIZE; m ++)
 				{
 					tempSpace[(j * (RECORD_SIZE / COPYSIZE) + m) * WARPSIZE] = *((copytype_t*) &fdata[(curAddrs + j * RECORD_SIZE + m * COPYSIZE)]);
+					if(k == 0 && i == 15)
+					{
+						for(int n = 0; n < COPYSIZE; n ++)
+							printf("|%c", fdata[(curAddrs + j * RECORD_SIZE + m * COPYSIZE + n)]);
+					}
 				}
 				//hostBuffer[0][offset + j] = fdata[curAddrs + j];
 				//copies ++;
@@ -327,14 +329,6 @@ void* copyMethodPattern(void* arg)
 
 		}
 	}
-
-	gettimeofday(&partial_end, NULL);
-	sec = partial_end.tv_sec - partial_start.tv_sec;
-	ms = partial_end.tv_usec - partial_start.tv_usec;
-	diff = sec * 1000000 + ms;
-
-	printf("\n%10s:\t\t%0.1fms\n", "@@@ my memcpy", (double)((double)diff/1000.0));
-
 
 
 	return NULL;
