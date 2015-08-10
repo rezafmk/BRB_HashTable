@@ -43,11 +43,22 @@ int main(int argc, char **argv)
 	{
 		FILE *fp = fopen(fileName, "w+");
 
-		char** names = generateNames(uniqueNameNum, 12, 50);
+		char** names = generateNames(uniqueNameNum, 12, 48);
 		
 		int i;
 		for (i = 0; i < recNum; i++)
-			fprintf(fp, "http://www.%s.com/%d.html\t%d.%d.%d.%d\t\%d\n", names[rand() % uniqueNameNum], rand()%1024, rand()%256, rand()%256, rand()%256,rand()%256, rand()%1000);
+		{
+			int randomNumber = rand() % uniqueNameNum;
+			fprintf(fp, "http://www.%s.com", names[randomNumber]);
+			int urlSize = 16 + strlen(names[randomNumber]);
+			int paddingSize = 64 - urlSize;
+			int j;
+			for(j = 0; j < paddingSize; j ++)
+				fprintf(fp, " ", ' ');
+			fprintf(fp, "\n");
+		
+
+		}
 
 		fclose(fp);
 	}
