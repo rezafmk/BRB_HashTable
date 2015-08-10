@@ -3,88 +3,16 @@
 
 #define TEXTITEMSIZE 1
 #define DATAITEMSIZE 1
+#define RECORD_SIZE 64
 
 #define EPOCHCHUNK 16
 
-#define HASHWALKSTEP 133
-#define NUMHASHROWS 10000000
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
-
-__device__ inline void addToHashTable(char* word, int wordSize, hashEntry* hashTable, int numBuckets, int hIndex, volatile unsigned int* volatile locks)
-{
-	int oldValue = 1;
-	while(oldValue == 1)
-	{
-		hashEntry* possibleMatch = &hashTable[hIndex];
-
-		if(possibleMatch->valid == 1)
-		{
-			if(wordSize == possibleMatch->length && isEqual(word, possibleMatch->word, wordSize))
-			{
-				possibleMatch->counter ++;
-				//atomicExch((unsigned int*) &locks[hIndex], 0);
-				oldValue = 0;
-			}
-			else
-			{
-				//atomicExch((unsigned int*) &locks[hIndex], 0);
-				hIndex = (hIndex+ HASHWALKSTEP) % numBuckets;
-				//hIndex = hashFunc(word, wordSize, NUMHASHROWS, hashCounter);
-			}
-		}
-		else
-		{
-			while(oldValue == 1)
-			{
-				oldValue = atomicCAS((unsigned int*) &locks[hIndex], 0, 1);
-				//oldValue = 0;
-
-				if(oldValue == 0)
-				{
-					hashEntry* possibleMatch = &hashTable[hIndex];
-
-					if(possibleMatch->valid == 1)
-					{
-						if(wordSize == possibleMatch->length && isEqual(word, possibleMatch->word, wordSize))
-						{
-							possibleMatch->counter ++;
-							atomicExch((unsigned int*) &locks[hIndex], 0);
-						}
-						else
-						{
-							atomicExch((unsigned int*) &locks[hIndex], 0);
-							hIndex = (hIndex+ HASHWALKSTEP) % numBuckets;
-							//hIndex = hashFunc(word, wordSize, NUMHASHROWS, hashCounter);
-							oldValue = 1;
-							//hashCounter ++;
-						}
-					}
-					else
-					{
-						possibleMatch->counter = 1;
-						possibleMatch->length = wordSize;
-						for(int j = 0; j < wordSize; j ++)
-							possibleMatch->word[j] = word[j];
-						possibleMatch->valid = 1;
-
-						atomicExch((unsigned int*) &locks[hIndex], 0);
-					}
-
-				}
-			}	
-		}
-	}
-	
-
-	return;
-}
 
 
 __global__ void wordCountKernelMultipass(
 				char* data, 
-				largeInt* startIndexes, 
-				hashEntry* hashTable, 
-				unsigned int* locks,
+				int numRecords,
 				ptr_t* textAddrs,
 				char* textData,
 				int volatile* completeFlag,
@@ -99,11 +27,10 @@ __global__ void wordCountKernelMultipass(
 	int index = TID2;
 	bool prediction = (threadIdx.x < BLOCKSIZE);
 
-	ptr_t start = startIndexes[index];
-	ptr_t end = startIndexes[index + 1];
+	int chunkSize = numRecords / numThreads;
+	int start = index * chunkSize;
+	int end = start + chunkSize;
 
-	//int textAddrCounter = (blockIdx.x * BLOCKSIZE + (threadIdx.x / 32) * WARPSIZE) * iterations + (threadIdx.x % 32);
-	//int textDataCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * DATAITEMSIZE + (threadIdx.x % 32) * COPYSIZE;
 	int genericCounter;
 	
 	int flagGPU[3];
@@ -115,13 +42,6 @@ __global__ void wordCountKernelMultipass(
 	flagCPU[0] = 1;
 	flagCPU[1] = 1;
 	flagCPU[2] = 1;
-
-	char myWord[WORDSIZELIMIT];
-	int myWordCounter = 0;
-	
-	int startWord = start;
-	bool inWord = true;
-
 
 	__shared__ int addrDis1[PATTERNSIZE * BLOCKSIZE];
 	__shared__ bool validatedArray[BLOCKSIZE / WARPSIZE];
@@ -151,7 +71,7 @@ __global__ void wordCountKernelMultipass(
 			int loopCounter = 0;
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
-				ptr_t addr = (ptr_t) &data[i];
+				ptr_t addr = (ptr_t) &data[i * RECORD_SIZE];
 				if(addrCounterSpace1 < PATTERNSIZE)
 					addrDis1[(threadIdx.x % BLOCKSIZE) * PATTERNSIZE + addrCounterSpace1] = (int) (addr - previousAddrSpace1);
 
@@ -175,7 +95,7 @@ __global__ void wordCountKernelMultipass(
 			loopCounter = 0;
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
-				ptr_t addr = (ptr_t) &data[i];
+				ptr_t addr = (ptr_t) &data[i * RECORD_SIZE];
 				dataCountSpace1 ++;
 				if(addr != previousAddrSpace1)
 					validated = false;
@@ -263,43 +183,31 @@ __global__ void wordCountKernelMultipass(
 
 		if(!prediction && j > 1)
 		{
-			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * DATAITEMSIZE + (threadIdx.x % 32) * COPYSIZE;
+			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * RECORD_SIZE + (threadIdx.x % 32) * COPYSIZE;
 			int step = 0;
 
 			int loopCounter = 0;
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
-				char c = (textData + (s * iterations * DATAITEMSIZE * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
-
-				step ++;
-				genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
-				step %= COALESCEITEMSIZE;
-
-				myNumbers[index] ++;
-
-				if((c < 'a' || c > 'z') && inWord)
+				//TODO: since the hash table lib is ours, we can read the data in it coalescly.
+				//char URL[64];
+				int sum = 0;
+				for(int j = 0; j < RECORD_SIZE; j ++)
 				{
-					myWordCounter = 0;
-					inWord = false;
-					int length = i - startWord;
-					if(length > 5 && length <= WORDSIZELIMIT)
-					{
-						unsigned hIndex = hashFunc(myWord, length, NUMHASHROWS, 0);
-						addToHashTable(myWord, length, hashTable, NUMHASHROWS, hIndex, locks);
-					}
-				}
-				else if((c >= 'a' && c <= 'z') && !inWord)
-				{
-					startWord = i;
-					inWord = true;
-				}
+					char c = (textData + (s * iterations * RECORD_SIZE * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
+					//URL[j] = c;
+					sum += (int) c;
 
-				if(inWord)
-					myWord[myWordCounter ++] = c;
+					step ++;
+					genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
+					step %= COALESCEITEMSIZE;
+				}
+				//hashTable.add(URL, url_size);
+				myNumbers[index] += sum;
+
 			}
 
 			s = (s + 1) % 3;
-		
 		}
 
 		__syncthreads();
@@ -368,7 +276,7 @@ void* copyMethodPattern(void* arg)
 	time_t ms;
 	time_t diff;
 
-	int copies = 0;
+	//int copies = 0;
 
 	gettimeofday(&partial_start, NULL);
 
@@ -395,8 +303,12 @@ void* copyMethodPattern(void* arg)
 			copytype_t* tempSpace = (copytype_t*) &hostBuffer[0][offset];
 
 			//for(int j = 0; j < warpFirstLastAddrs[i].itemCount / COPYSIZE; j ++)
-			for(int j = 0; j < (warpFirstLastAddrs[i].itemCount + 7) / COPYSIZE; j ++)
+			for(int j = 0; j < warpFirstLastAddrs[i].itemCount; j ++)
 			{
+				for(int m = 0; m < RECORD_SIZE / COPYSIZE; m ++)
+				{
+					tempSpace[(j * (RECORD_SIZE / COPYSIZE) + m) * WARPSIZE] = *((copytype_t*) &fdata[(curAddrs + j * RECORD_SIZE + m * COPYSIZE)]);
+				}
 				//hostBuffer[0][offset + j] = fdata[curAddrs + j];
 				//copies ++;
 				//__builtin_prefetch(&tempSpace[(j + 1) * WARPSIZE], 1, 3); 
@@ -407,7 +319,6 @@ void* copyMethodPattern(void* arg)
 				//tempSpace[j] = *((copytype_t*) &fdata[(curAddrs + j * COPYSIZE)]);
 
 				//1
-				tempSpace[j * WARPSIZE] = *((copytype_t*) &fdata[(curAddrs + j * COPYSIZE)]);
 
 				//curAddrs += warpStrides[0].strides[strideCounter % warpStrides[0].strideSize] * COPYSIZE;
 				//offset += spaceDataItemSizes[0] * COPYSIZE;
@@ -422,7 +333,7 @@ void* copyMethodPattern(void* arg)
 	ms = partial_end.tv_usec - partial_start.tv_usec;
 	diff = sec * 1000000 + ms;
 
-	//printf("\n%10s:\t\t%0.1fms\n", "@@@ my memcpy", (double)((double)diff/1000.0));
+	printf("\n%10s:\t\t%0.1fms\n", "@@@ my memcpy", (double)((double)diff/1000.0));
 
 
 
@@ -540,7 +451,6 @@ void* pipelineData(void* argument)
 			pthread_t copyThreads[COPYTHREADS - 1];
 			copyPackagePattern pkg[COPYTHREADS];
 			
-#if 1
 			for(int h = 0; h < COPYTHREADS; h ++)
 			{
 				unsigned int warpChunk = (BLOCKSIZE / WARPSIZE) / COPYTHREADS;
@@ -568,7 +478,6 @@ void* pipelineData(void* argument)
 
 			for(int h = 0; h < COPYTHREADS - 1; h ++)
 				pthread_join(copyThreads[h], NULL);
-#endif
 
 			endGlobalTimer(myBlock, "@@ Assemble data into pinned buffer");
 			
@@ -625,84 +534,38 @@ int main(int argc, char** argv)
 	if(readed != fileSize)
 		printf("Not all of the file is read\n");
 
+	dim3 block(BLOCKSIZE, 1, 1);
+	dim3 block2((BLOCKSIZE * 2), 1, 1);
+	dim3 grid(MAXBLOCKS, 1, 1);
+	int numThreads = BLOCKSIZE * grid.x * grid.y;
 
-	//================= startIndexes =====================//
-	size_t threadChunkSize = fileSize / NUMTHREADS;
-	largeInt* startIndexes = (largeInt*) malloc((NUMTHREADS + 1) * sizeof(largeInt));
-	//largeInt* startIndexes2 = (largeInt*) malloc((NUMTHREADS + 1) * sizeof(largeInt));
+	int numRecords = fileSize / RECORD_SIZE;
 
-#if 1
-	for(int i = 0; i < NUMTHREADS; i ++)
-		startIndexes[i] = i * threadChunkSize;
-
-	startIndexes[NUMTHREADS] = (ptr_t) fileSize;
-
-	for(int i = 1; i < NUMTHREADS; i ++)
-	{
-		int disToNextWhiteSpace = countToNextWord(&fdata[startIndexes[i]]);
-		startIndexes[i] += (disToNextWhiteSpace - 1);
-	}
-#endif
-
-	largeInt* dstartIndexes;
-	//largeInt* dstartIndexes2;
-	cudaMalloc((void**) &dstartIndexes, (NUMTHREADS + 1) * sizeof(largeInt));
-	cudaMemcpy(dstartIndexes, startIndexes, (NUMTHREADS + 1) * sizeof(largeInt), cudaMemcpyHostToDevice);
-	//======================================================//
-	
 	//======================================================//
 	int chunkSize = EPOCHCHUNK * (1 << 20);
 
+	//TODO: make epochNum unnecessary
 	int epochNum = (int) (fileSize / chunkSize);
 	if(fileSize % chunkSize)
 		epochNum ++;
 
 	printf("Number of epochs: %d\n", epochNum);
-
 	//======================================================//
 
 	//=================== Max num of iterations ============//
-	int maxIterations = 0;
-	for(int i = 0; i < NUMTHREADS; i ++)
-		if((startIndexes[i + 1] - startIndexes[i]) > maxIterations)
-			maxIterations = startIndexes[i + 1] - startIndexes[i];
+	int maxIterations = numRecords / numThreads;
 
 	maxIterations ++;
 	if(epochNum > 1)
 		maxIterations /= (epochNum);
 	//======================================================//
 
-	//============== Hash table and locks===================//
-	size_t hashTableSize = NUMHASHROWS * sizeof(hashEntry);
-	
-	hashEntry* dhashTable;
-	cudaMalloc((void**) &dhashTable, hashTableSize);
-	cudaMemset(dhashTable, 0, hashTableSize);
-
-	unsigned int* dcolumnLocks;
-	cudaMalloc((void**) &dcolumnLocks, NUMHASHROWS * sizeof(int));
-	cudaMemset(dcolumnLocks, 0, NUMHASHROWS * sizeof(int));
-	//======================================================//
-
-	errR = cudaGetLastError();
-	printf("Error after allocating memory spaces is: %s\n", cudaGetErrorString(errR));
-	if(errR != cudaSuccess)
-		exit(1);
-	
-	dim3 block(BLOCKSIZE, 1, 1);
-	dim3 block2((BLOCKSIZE * 2), 1, 1);
-	dim3 grid(MAXBLOCKS, 1, 1);
-	int numThreads = BLOCKSIZE * grid.x * grid.y;
-
-#if 1
-
-	printf("EpochNum: %d\n", epochNum);
 
 	int iterations = maxIterations;
 	if(iterations % 8 != 0)
 		iterations += (8 - (iterations % 8));
 
-	//========= merchantAddrHostBuffer ===========//
+	//========= URLAddrHostBuffer ===========//
 	unsigned int textAddrsHostBufferSize = sizeof(ptr_t) * iterations * numThreads * 3;
 	ptr_t* tempTextAddrHostBuffer;
 	tempTextAddrHostBuffer = (ptr_t*) malloc(textAddrsHostBufferSize + MEMORY_ALIGNMENT);
@@ -714,8 +577,8 @@ int main(int argc, char** argv)
 	cudaHostGetDevicePointer((void **)&textAddrs, (void *)hostTextAddrHostBuffer, 0);
 	//============================================//	
 
-	//========= creditDataHostBuffer ===========//
-	int textHostBufferSize = TEXTITEMSIZE * iterations * numThreads * 3;
+	//========= URLHostBuffer ===========//
+	int textHostBufferSize = RECORD_SIZE * iterations * numThreads * 3;
 	char* tempTextHostBuffer;
 	tempTextHostBuffer = (char*) malloc(textHostBufferSize + MEMORY_ALIGNMENT);
 	char* hostTextHostBuffer;
@@ -740,20 +603,14 @@ int main(int argc, char** argv)
 	//============================================//
 
 	//================= strides ===============//
-	int stridesSize = numThreads * sizeof(strides_t) * 3;//16 * sizeof(int) + 2 * sizeof(long long int);
+	int stridesSize = numThreads * sizeof(strides_t) * 3;
 	strides_t* tempStridesSpace1;
-
 	tempStridesSpace1 = (strides_t*) malloc(stridesSize + MEMORY_ALIGNMENT);
-
 	strides_t* hostStridesSpace1;
 	hostStridesSpace1 = (strides_t*) ALIGN_UP(tempStridesSpace1, MEMORY_ALIGNMENT);
-
 	memset((void*) hostStridesSpace1, 0, stridesSize);
-
 	cudaHostRegister((void*) hostStridesSpace1, stridesSize, CU_MEMHOSTALLOC_DEVICEMAP);
-
 	strides_t* stridesSpace1;
-
 	cudaHostGetDevicePointer((void **)&stridesSpace1, (void *)hostStridesSpace1, 0);
 	//============================================//
 
@@ -761,22 +618,16 @@ int main(int argc, char** argv)
 	int fistLastAddrSize = numThreads * sizeof(firstLastAddr_t) * 3;//16 * sizeof(int) + 2 * sizeof(long long int);
 	firstLastAddr_t* tempFirstLastSpace1;
 	tempFirstLastSpace1 = (firstLastAddr_t*) malloc(fistLastAddrSize + MEMORY_ALIGNMENT);
-
 	firstLastAddr_t* hostFirstLastSpace1;
 	hostFirstLastSpace1 = (firstLastAddr_t*) ALIGN_UP(tempFirstLastSpace1, MEMORY_ALIGNMENT);
-
 	memset((void*) hostFirstLastSpace1, 0, fistLastAddrSize);
-
 	cudaHostRegister((void*) hostFirstLastSpace1, fistLastAddrSize, CU_MEMHOSTALLOC_DEVICEMAP);
-
 	firstLastAddr_t* firstLastAddrsSpace1;
-
 	cudaHostGetDevicePointer((void **)&firstLastAddrsSpace1, (void *)hostFirstLastSpace1, 0);
 	//============================================//
 
-
 	char* textData;
-	cudaMalloc((void**) &textData, TEXTITEMSIZE * iterations * numThreads * 3);
+	cudaMalloc((void**) &textData, RECORD_SIZE * iterations * numThreads * 3);
 
 	char* phony = (char*) 0x0;
 	cudaStream_t execStream;
@@ -793,11 +644,6 @@ int main(int argc, char** argv)
 	time_t ms;
 	time_t diff;
 
-	int* dfinalChar;
-	cudaMalloc((void**) &dfinalChar, numThreads * sizeof(int));
-	cudaMemset(dfinalChar, 0, numThreads * sizeof(int));
-
-
 	errR = cudaGetLastError();
 	printf("#######Error before calling the kernel is: %s\n", cudaGetErrorString(errR));
 
@@ -805,14 +651,9 @@ int main(int argc, char** argv)
 
 	printf("Calling the kernel...\n");
 
-	//FIXME: one thing that should be thought about is that when iterations is not the same for all threads. What to do then????
-	//int sharedMemSize = BLOCKSIZE * PATTERNSIZE * sizeof(int) * 1;
-
 	wordCountKernelMultipass<<<grid, block2, 0, execStream>>>(
 			phony, 
-			dstartIndexes, 
-			dhashTable, 
-			dcolumnLocks,
+			numRecords, //TODO fill this
 			textAddrs,
 			textData,
 			flags,
@@ -842,14 +683,14 @@ int main(int argc, char** argv)
 		argument[m]->threadBlockSize = BLOCKSIZE;
 		argument[m]->textItems = iterations;
 		argument[m]->textHostBuffer[0] = hostTextHostBuffer;
-		argument[m]->textHostBuffer[1] = hostTextHostBuffer + iterations * numThreads * DATAITEMSIZE;
-		argument[m]->textHostBuffer[2] = hostTextHostBuffer + iterations * numThreads * DATAITEMSIZE * 2;
+		argument[m]->textHostBuffer[1] = hostTextHostBuffer + iterations * numThreads * RECORD_SIZE;
+		argument[m]->textHostBuffer[2] = hostTextHostBuffer + iterations * numThreads * RECORD_SIZE * 2;
 		argument[m]->textAddrs[0] = hostTextAddrHostBuffer;
 		argument[m]->textAddrs[1] = hostTextAddrHostBuffer + iterations * numThreads;
 		argument[m]->textAddrs[2] = hostTextAddrHostBuffer +  iterations * numThreads * 2;
 		argument[m]->textData[0] = textData;
-		argument[m]->textData[1] = textData + iterations * numThreads * DATAITEMSIZE;
-		argument[m]->textData[2] = textData +  iterations * numThreads * DATAITEMSIZE * 2;
+		argument[m]->textData[1] = textData + iterations * numThreads * RECORD_SIZE;
+		argument[m]->textData[2] = textData +  iterations * numThreads * RECORD_SIZE * 2;
 		argument[m]->stridesSpace1[0] = hostStridesSpace1;
 		argument[m]->stridesSpace1[1] = hostStridesSpace1 + numThreads;
 		argument[m]->stridesSpace1[2] = hostStridesSpace1 + numThreads * 2;
@@ -864,14 +705,8 @@ int main(int argc, char** argv)
 			pthread_create(&threads[m], NULL, pipelineData, (void*) argument[m]);
 		else
 			pipelineData(argument[m]);
-		//if(rc)
-		//{
-			//printf("ERROR: could not create the thread %d\n", m);
-			//exit(1);
-		//}
 	}
 
-	//cudaThreadSynchronize();
 	while(cudaSuccess != cudaStreamQuery(execStream))
 		usleep(300);	
 
@@ -891,29 +726,6 @@ int main(int argc, char** argv)
 
 	printf("\n%10s:\t\t%0.1fms\n", "Multipass wordcount", (double)((double)diff/1000.0));
 
-
-	hashEntry* hhashTable = (hashEntry*) malloc(hashTableSize);
-	cudaMemcpy(hhashTable, dhashTable, hashTableSize, cudaMemcpyDeviceToHost);
-	
-	
-	unsigned showCounter = 0;
-
-	for(int i = 0; i < hashTableSize / sizeof(hashEntry); i ++)
-	{
-		if(hhashTable[i].valid == 1)
-		{
-			if(showCounter < 20)
-			{
-				printf("%20s", hhashTable[i].word);
-				printf("\t count: %d\n", hhashTable[i].counter);
-			}
-			showCounter ++;
-		}
-	}
-	printf("Number of words: %u\n", showCounter);
-
-
-	
 	int* myNumbers = (int*) malloc(numThreads * sizeof(int));
 	cudaMemcpy(myNumbers, dmyNumbers, numThreads * sizeof(int), cudaMemcpyDeviceToHost);
 
@@ -921,9 +733,8 @@ int main(int argc, char** argv)
 	for(int i = 0; i < numThreads; i ++)
 		totalCount += myNumbers[i];
 
-	printf("Total number: %lld\n", totalCount);
+	printf("Total number of hash stores: %lld\n", totalCount);
 
-#endif
 
 	return 0;
 }
