@@ -40,8 +40,10 @@ __global__ void wordCountKernelMultipass(
 	bool prediction = (threadIdx.x < BLOCKSIZE);
 
 	int chunkSize = numRecords / numThreads;
+	chunkSize = (numRecords % numThreads == 0)? chunkSize : chunkSize + 1;
 	int start = index * chunkSize;
 	int end = start + chunkSize;
+	end = (end > numRecords)? numRecords : end;
 
 	int genericCounter;
 	
