@@ -197,15 +197,12 @@ __global__ void wordCountKernelMultipass(
 					char c = (textData + (s * iterations * RECORD_SIZE * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
 					//URL[j] = c;
 					sum += (int) c;
-					//if(index == 100)
-						//printf("%c", c);
 
 					step ++;
 					genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
 					step %= COALESCEITEMSIZE;
 				}
-				//if(index == 100)
-					//printf("\n====\n");
+
 				//hashTable.add(URL, url_size);
 				myNumbers[index] += sum;
 
@@ -305,11 +302,6 @@ void* copyMethodPattern(void* arg)
 				for(int m = 0; m < RECORD_SIZE / COPYSIZE; m ++)
 				{
 					tempSpace[(j * (RECORD_SIZE / COPYSIZE) + m) * WARPSIZE] = *((copytype_t*) &fdata[(curAddrs + j * RECORD_SIZE + m * COPYSIZE)]);
-					if(k == 0 && i == 15)
-					{
-						for(int n = 0; n < COPYSIZE; n ++)
-							printf("|%c", fdata[(curAddrs + j * RECORD_SIZE + m * COPYSIZE + n)]);
-					}
 				}
 				//hostBuffer[0][offset + j] = fdata[curAddrs + j];
 				//copies ++;
@@ -692,7 +684,7 @@ int main(int argc, char** argv)
 		argument[m]->firstLastAddrsSpace1[0] = hostFirstLastSpace1;
 		argument[m]->firstLastAddrsSpace1[1] = hostFirstLastSpace1 + numThreads;
 		argument[m]->firstLastAddrsSpace1[2] = hostFirstLastSpace1 + numThreads * 2;
-		argument[m]->textItemSize = TEXTITEMSIZE;
+		argument[m]->textItemSize = RECORD_SIZE;
 		argument[m]->sourceSpaceSize1 = fileSize;
 
 		if(m < (MAXBLOCKS - 1))
