@@ -271,8 +271,6 @@ void* copyMethodPattern(void* arg)
 	char* hostBuffer[1];
 	hostBuffer[0] = pkg->hostBuffer[0];
 
-	//for(int k = 0; k < (BLOCKSIZE / WARPSIZE); k ++)
-
 
 	for(int k = warpStart; k < warpEnd; k ++)
 	{
@@ -289,34 +287,15 @@ void* copyMethodPattern(void* arg)
 			//1
 			offset = ((myBlock * BLOCKSIZE + k * WARPSIZE) * epochDuration) * spaceDataItemSizes[0] + i * COPYSIZE;
 
-			//offset = ((myBlock * BLOCKSIZE + k * WARPSIZE + i ) * epochDuration) * spaceDataItemSizes[0];
-			//offset = ((myBlock * BLOCKSIZE + k * WARPSIZE + i) * epochDuration) * spaceDataItemSizes[0];
-			//if(warpFirstLastAddrs[i].itemCount >= epochDuration)
-				//printf("########## itemCount: %d epochDuration: %d\n", warpFirstLastAddrs[i].itemCount, epochDuration);
-			//assert(warpFirstLastAddrs[i].itemCount <= epochDuration);
 			copytype_t* tempSpace = (copytype_t*) &hostBuffer[0][offset];
 
-			//for(int j = 0; j < warpFirstLastAddrs[i].itemCount / COPYSIZE; j ++)
+			//TODO this has to use strides to know what address to load next.
 			for(int j = 0; j < warpFirstLastAddrs[i].itemCount; j ++)
 			{
 				for(int m = 0; m < RECORD_SIZE / COPYSIZE; m ++)
 				{
 					tempSpace[(j * (RECORD_SIZE / COPYSIZE) + m) * WARPSIZE] = *((copytype_t*) &fdata[(curAddrs + j * RECORD_SIZE + m * COPYSIZE)]);
 				}
-				//hostBuffer[0][offset + j] = fdata[curAddrs + j];
-				//copies ++;
-				//__builtin_prefetch(&tempSpace[(j + 1) * WARPSIZE], 1, 3); 
-				//for(int n = 0; n < spaceDataItemSizes[0] / COPYSIZE; n ++)
-				//@@*((copytype_t*) &hostBuffer[0][offset + j * WARPSIZE * COPYSIZE]) = *((copytype_t*) &fdata[(curAddrs + j * COPYSIZE)]);
-				//*((copytype_t*) &hostBuffer[0][offset + j * WARPSIZE * COPYSIZE]) = *((copytype_t*) &fdata[(curAddrs + j * COPYSIZE)]);
-
-				//tempSpace[j] = *((copytype_t*) &fdata[(curAddrs + j * COPYSIZE)]);
-
-				//1
-
-				//curAddrs += warpStrides[0].strides[strideCounter % warpStrides[0].strideSize] * COPYSIZE;
-				//offset += spaceDataItemSizes[0] * COPYSIZE;
-				//strideCounter ++;
 			}
 
 		}
@@ -337,11 +316,6 @@ void* pipelineData(void* argument)
 	int* gpuFlags = threadData->gpuFlags;
 	cudaStream_t* execStream = threadData->execStream;
 
-        //ptr_t* textAddrs = threadData->textAddrs;
-
-	//ptr_t* addresses[1];
-	//addresses[0] = textAddrs;
-	
 	char* textData[3];
 	textData[0] = threadData->textData[0];
 	textData[1] = threadData->textData[1];
@@ -378,13 +352,6 @@ void* pipelineData(void* argument)
 	stridesSpace[0][1] = stridesSpace1[1];
 	stridesSpace[0][2] = stridesSpace1[2];
 
-	//int* stridesNoSpace1 = threadData->stridesNoSpace1;
-	//int* stridesNoSpace2 = threadData->stridesNoSpace2;
-
-	//int* strideNoSpace[2];
-	//strideNoSpace[0] = stridesNoSpace1;
-	//strideNoSpace[1] = stridesNoSpace2;
-
 	firstLastAddr_t* firstLastAddrsSpace1[3];
 	firstLastAddrsSpace1[0] = threadData->firstLastAddrsSpace1[0];
 	firstLastAddrsSpace1[1] = threadData->firstLastAddrsSpace1[1];
@@ -395,14 +362,10 @@ void* pipelineData(void* argument)
 	firstLastAddrsSpace[0][1] = firstLastAddrsSpace1[1];
 	firstLastAddrsSpace[0][2] = firstLastAddrsSpace1[2];
 
-	//int dataItemsPerEpoch[2];
-	//dataItemsPerEpoch[0] = creditItems;
-	//dataItemsPerEpoch[1] = merchantItems;
-
 	int spaceDataItemSizes[1];
 	spaceDataItemSizes[0] = textItemSize;
 
-	char* hostBuffer[1][3];// = (char**) malloc(2 * sizeof(char**));
+	char* hostBuffer[1][3];
 	hostBuffer[0][0] = textHostBuffer[0];
 	hostBuffer[0][1] = textHostBuffer[1];
 	hostBuffer[0][2] = textHostBuffer[2];
