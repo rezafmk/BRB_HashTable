@@ -9,6 +9,7 @@ __device__ int isEqual(char* first, char* second, int len)
 	
 }
 
+#if 0
 __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets, int counter)
 {                       
         unsigned hash = 2166136261;
@@ -41,6 +42,7 @@ __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
 
         return hash % numBuckets;
 }
+#endif
 
 __device__ int findPatternKernel(int* array, int size)
 {

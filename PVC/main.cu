@@ -1,13 +1,22 @@
 #include "global.h"
+#include "hashGlobal.h"
 #include "kernel.cu"
 
 #define TEXTITEMSIZE 1
 #define DATAITEMSIZE 1
 #define RECORD_SIZE 64
+#define NUM_BUCKETS 1000000
 
 #define EPOCHCHUNK 16
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
+
+typedef struct
+{
+	pagingConfig_t* pconfig;
+	cudaStream_t* serviceStream;
+} dataPackage_t;
+
 
 
 __global__ void wordCountKernelMultipass(
@@ -22,7 +31,10 @@ __global__ void wordCountKernelMultipass(
 				int iterations,
 				int epochNum, 
 				int* myNumbers,
-				int numThreads)
+				int numThreads,
+				pagingConfig_t* pconfig,
+				hashtableConfig_t* hconfig
+				)
 {
 	int index = TID2;
 	bool prediction = (threadIdx.x < BLOCKSIZE);
@@ -190,21 +202,27 @@ __global__ void wordCountKernelMultipass(
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
 				//TODO: since the hash table lib is ours, we can read the data in it coalescly.
-				//char URL[64];
-				int sum = 0;
+				char URL[64];
+				int urlSize = 0;
 				for(int j = 0; j < RECORD_SIZE; j ++)
 				{
 					char c = (textData + (s * iterations * RECORD_SIZE * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
-					//URL[j] = c;
-					sum += (int) c;
+					URL[j] = c;
+					if(c != ' ' && c != '\n')
+						urlSize ++;
+					//sum += (int) c;
 
 					step ++;
 					genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
 					step %= COALESCEITEMSIZE;
 				}
 
-				//hashTable.add(URL, url_size);
-				myNumbers[index] += sum;
+				largeInt value = 1;
+				if(addToHashtable((void*) URL, urlSize, (void*) &value, sizeof(largeInt), hconfig, pconfig) == true)
+					myNumbers[index * 2] ++;
+				else
+					myNumbers[index * 2 + 1] ++;
+					
 
 			}
 
@@ -456,6 +474,16 @@ void* pipelineData(void* argument)
 	return NULL;
 }
 
+void* recyclePages(void* arg)
+{
+	printf("recycler thread created.\n");
+	pagingConfig_t* pconfig = ((dataPackage_t*) arg)->pconfig;
+	cudaStream_t* serviceStream = ((dataPackage_t*) arg)->serviceStream;
+
+	pageRecycler(pconfig, serviceStream);
+	return NULL;
+}
+
 
 int main(int argc, char** argv)
 {
@@ -585,8 +613,36 @@ int main(int argc, char** argv)
 	cudaStreamCreate(&copyStream);
 	
 	int* dmyNumbers;
-	cudaMalloc((void**) &dmyNumbers, numThreads * sizeof(int));
-	cudaMemset(dmyNumbers, 0, numThreads * sizeof(int));
+	cudaMalloc((void**) &dmyNumbers, 2 * numThreads * sizeof(int));
+	cudaMemset(dmyNumbers, 0, 2 * numThreads * sizeof(int));
+
+	//============ initializing the hash table and page table ==================//
+	largeInt availableGPUMemory = (1 << 28);
+	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
+	memset(pconfig, 0, sizeof(pagingConfig_t));
+	
+	printf("@INFO: calling initPaging\n");
+	initPaging(availableGPUMemory, pconfig);
+
+	hashtableConfig_t* hconfig = (hashtableConfig_t*) malloc(sizeof(hashtableConfig_t));
+	printf("@INFO: calling hashtableInit\n");
+	hashtableInit(NUM_BUCKETS, hconfig);
+	
+	
+	printf("@INFO: transferring config structs to GPU memory\n");
+	pagingConfig_t* dpconfig;
+	cudaMalloc((void**) &dpconfig, sizeof(pagingConfig_t));
+	cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
+
+	hashtableConfig_t* dhconfig;
+	cudaMalloc((void**) &dhconfig, sizeof(hashtableConfig_t));
+	cudaMemcpy(dhconfig, hconfig, sizeof(hashtableConfig_t), cudaMemcpyHostToDevice);
+
+	cudaStream_t serviceStream;
+	cudaStreamCreate(&serviceStream);
+	
+	//==========================================================================//
+
 
 	struct timeval partial_start, partial_end;//, exec_start, exec_end;
 	time_t sec;
@@ -612,7 +668,9 @@ int main(int argc, char** argv)
 			iterations,
 			epochNum,
 			dmyNumbers,
-			numThreads
+			numThreads,
+			dpconfig,
+			dhconfig
 			);
 
 	
@@ -656,6 +714,14 @@ int main(int argc, char** argv)
 			pipelineData(argument[m]);
 	}
 
+	pthread_t thread;
+	dataPackage_t datapkgArgument;
+
+	datapkgArgument.pconfig = pconfig;
+	datapkgArgument.serviceStream = &serviceStream;
+
+	pthread_create(&thread, NULL, recyclePages, &datapkgArgument);
+
 	while(cudaSuccess != cudaStreamQuery(execStream))
 		usleep(300);	
 
@@ -675,14 +741,19 @@ int main(int argc, char** argv)
 
 	printf("\n%10s:\t\t%0.1fms\n", "Multipass wordcount", (double)((double)diff/1000.0));
 
-	int* myNumbers = (int*) malloc(numThreads * sizeof(int));
-	cudaMemcpy(myNumbers, dmyNumbers, numThreads * sizeof(int), cudaMemcpyDeviceToHost);
+	int* myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
+	cudaMemcpy(myNumbers, dmyNumbers, 2 * numThreads * sizeof(int), cudaMemcpyDeviceToHost);
 
-	largeInt totalCount = 0;
+	largeInt totalSuccess = 0;
+	largeInt totalFailed = 0;
 	for(int i = 0; i < numThreads; i ++)
-		totalCount += myNumbers[i];
+	{
+		totalSuccess += myNumbers[i * 2];
+		totalFailed += myNumbers[i * 2 + 1];
+	}
 
-	printf("Total number of hash stores: %lld\n", totalCount);
+	printf("Total success: %lld\n", totalSuccess);
+	printf("Total failure: %lld\n", totalFailed);
 
 
 	return 0;

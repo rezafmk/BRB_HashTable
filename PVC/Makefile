@@ -2,6 +2,6 @@
 default:multipass
 
 multipass:
-	nvcc main.cu -arch=sm_30 -o bigdata $(FLAGS) $(GPUMultiPass) $(Libs) $(Includes)
+	nvcc main.cu paging.cu hashtable.cu -arch=sm_30 -o bigdata -rdc=true $(FLAGS) $(GPUMultiPass) $(Libs) $(Includes)
 clean:
 	rm -f bigdata
