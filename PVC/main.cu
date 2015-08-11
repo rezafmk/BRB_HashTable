@@ -15,6 +15,7 @@ typedef struct
 {
 	pagingConfig_t* pconfig;
 	cudaStream_t* serviceStream;
+	cudaStream_t* execStream;
 } dataPackage_t;
 
 
@@ -481,8 +482,9 @@ void* recyclePages(void* arg)
 	printf("recycler thread created.\n");
 	pagingConfig_t* pconfig = ((dataPackage_t*) arg)->pconfig;
 	cudaStream_t* serviceStream = ((dataPackage_t*) arg)->serviceStream;
+	cudaStream_t* execStream = ((dataPackage_t*) arg)->execStream;
 
-	pageRecycler(pconfig, serviceStream);
+	pageRecycler(pconfig, serviceStream, execStream);
 	return NULL;
 }
 
@@ -710,10 +712,7 @@ int main(int argc, char** argv)
 		argument[m]->textItemSize = RECORD_SIZE;
 		argument[m]->sourceSpaceSize1 = fileSize;
 
-		if(m < (MAXBLOCKS - 1))
-			pthread_create(&threads[m], NULL, pipelineData, (void*) argument[m]);
-		else
-			pipelineData(argument[m]);
+		pthread_create(&threads[m], NULL, pipelineData, (void*) argument[m]);
 	}
 
 	pthread_t thread;
@@ -721,12 +720,12 @@ int main(int argc, char** argv)
 
 	datapkgArgument.pconfig = pconfig;
 	datapkgArgument.serviceStream = &serviceStream;
+	datapkgArgument.execStream = &execStream;
 
 	pthread_create(&thread, NULL, recyclePages, &datapkgArgument);
 
-	while(cudaSuccess != cudaStreamQuery(execStream))
+	while(cudaErrorNotReady == cudaStreamQuery(execStream))
 		usleep(300);	
-
 
 	errR = cudaGetLastError();
 	printf("#######Error after calling the kernel is: %s\n", cudaGetErrorString(errR));

@@ -7,12 +7,13 @@
 #include <time.h>
 #include <sys/time.h>
 
-#define PAGE_SIZE (1 << 18)
+#define PAGE_SIZE (1 << 19)
 #define GROUP_SIZE (PAGE_SIZE / 64)
 #define ALIGNMET 8
 
 #define QUEUE_SIZE 500
 #define HOST_BUFFER_SIZE (1 << 31)
+#define NUM_QUEUES 32
 
 typedef long long int largeInt;
 
@@ -45,8 +46,9 @@ typedef struct
 	int totalNumPages;
 
 	//This will be a queue, holding pointers to pages that are available
-	pageQueue_t* queue;
-	pageQueue_t* dqueue;
+	pageQueue_t* queue[NUM_QUEUES];
+	pageQueue_t* dqueue[NUM_QUEUES];
+	//pageQueue_t** dqueue;
 
 	int initialPageAssignedCounter;
 	int initialPageAssignedCap;
@@ -86,13 +88,13 @@ typedef struct
 void initPaging(largeInt availableGPUMemory, pagingConfig_t* pconfig);
 void initQueue(pagingConfig_t* pconfig);
 void pushCleanPage(page_t* page, pagingConfig_t* pconfig);
-__device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig);
-__device__ page_t* popCleanPage(pagingConfig_t* pconfig);
-page_t* peekDirtyPage(pagingConfig_t* pconfig);
+__device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig, int queueId);
+__device__ page_t* popCleanPage(pagingConfig_t* pconfig, int queueId);
+page_t* peekDirtyPage(pagingConfig_t* pconfig, int queueId);
 __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingConfig_t* pconfig);
 __device__ page_t* allocateNewPage(pagingConfig_t* pconfig);
 __device__ void revokePage(page_t* page, pagingConfig_t* pconfig);
-void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream);
+void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream, cudaStream_t* execStream);
 
 
 void hashtableInit(int numBuckets, hashtableConfig_t* hconfig);

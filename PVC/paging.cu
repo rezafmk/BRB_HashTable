@@ -34,18 +34,26 @@ void initPaging(largeInt availableGPUMemory, pagingConfig_t* pconfig)
 
 void initQueue(pagingConfig_t* pconfig)
 {
+	
+	printf("@INFO: inside initQueue\n");
 	//This has to be allocated as host-pinned
-	cudaHostAlloc((void**) &(pconfig->queue), sizeof(pageQueue_t), cudaHostAllocMapped);
-	memset(pconfig->queue, 0, sizeof(pageQueue_t));
-	cudaHostGetDevicePointer((void**) &(pconfig->dqueue), pconfig->queue, 0);
+	for(int i = 0; i < NUM_QUEUES; i ++)
+	{
+		cudaHostAlloc((void**) &(pconfig->queue[i]), sizeof(pageQueue_t), cudaHostAllocMapped);
+		memset(pconfig->queue[i], 0, sizeof(pageQueue_t));
+		cudaHostGetDevicePointer((void**) &(pconfig->dqueue[i]), pconfig->queue[i], 0);
+	}
+	printf("@INFO: inside initQueue: after loop\n");
+	//cudaMalloc((void**) &(pconfig->dqueue), NUM_QUEUES * sizeof(void *));
+	//cudaMemcpy(pconfig->dqueue, pconfig->hdqueue, NUM_QUEUES * sizeof(void *), cudaMemcpyHostToDevice);
 }
 
 
 //TODO: I assume the queue will not be full which is a faulty assumption.
-__device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig)
+__device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig, int queueId)
 {
-	unsigned* dirtyRearAddress = (unsigned*) &(pconfig->dqueue->dirtyRear);
-	unsigned* frontAddress = (unsigned*) &(pconfig->dqueue->front);
+	unsigned* dirtyRearAddress = (unsigned*) &(pconfig->dqueue[queueId]->dirtyRear);
+	unsigned* frontAddress = (unsigned*) &(pconfig->dqueue[queueId]->front);
 	unsigned oldDirtyRear = *dirtyRearAddress;
 	unsigned assume;
 	bool success;
@@ -63,15 +71,18 @@ __device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig)
 	} while(assume != oldDirtyRear);
 
 	if(success)
-		pconfig->dqueue->pageIds[oldDirtyRear % QUEUE_SIZE] = page->id;
+	{
+		pconfig->dqueue[queueId]->pageIds[oldDirtyRear % QUEUE_SIZE] = page->id;
+	}
+		
 }
 
 
 //Run by GPU
-__device__ page_t* popCleanPage(pagingConfig_t* pconfig)
+__device__ page_t* popCleanPage(pagingConfig_t* pconfig, int queueId)
 {
-	unsigned* frontAddress = (unsigned*) &(pconfig->dqueue->front);
-	unsigned* rearAddress = (unsigned*) &(pconfig->dqueue->rear);
+	unsigned* frontAddress = (unsigned*) &(pconfig->dqueue[queueId]->front);
+	unsigned* rearAddress = (unsigned*) &(pconfig->dqueue[queueId]->rear);
 	unsigned oldFront = *frontAddress;
 	unsigned assume;
 
@@ -93,7 +104,7 @@ __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 	} while(assume != oldFront);
 
 	printf("providing one page\n");
-	page_t* page = &(pconfig->pages[pconfig->dqueue->pageIds[oldFront % QUEUE_SIZE]]);
+	page_t* page = &(pconfig->pages[pconfig->dqueue[queueId]->pageIds[oldFront % QUEUE_SIZE]]);
 	page->used = 0;
 	page->next = NULL; //OPT: This can be removed..
 	return page;
@@ -176,7 +187,7 @@ __device__ page_t* allocateNewPage(pagingConfig_t* pconfig)
 	else
 	{
 		//atomiPop will pop an item only if `minimmQuerySize` free entry is available, NULL otherwise.
-		return popCleanPage(pconfig);
+		return popCleanPage(pconfig, threadIdx.x % NUM_QUEUES);
 	}
 }
 
@@ -186,7 +197,7 @@ __device__ void revokePage(page_t* page, pagingConfig_t* pconfig)
 	//If parent page is -1, then we have nothing to do
 	while(page != NULL)
 	{
-		pushDirtyPage(page, pconfig);
+		pushDirtyPage(page, pconfig, threadIdx.x % NUM_QUEUES);
 		page = page->next;
 	}
 }
@@ -194,30 +205,32 @@ __device__ void revokePage(page_t* page, pagingConfig_t* pconfig)
 
 
 //This is run only by one CPU, so it can be simplified (in terms of synchronization)
-page_t* peekDirtyPage(pagingConfig_t* pconfig)
+page_t* peekDirtyPage(pagingConfig_t* pconfig, int queueId)
 {
 	page_t* page = NULL;
-	if(pconfig->queue->rear != pconfig->queue->dirtyRear)
+	if(pconfig->queue[queueId]->rear != pconfig->queue[queueId]->dirtyRear)
 	{
-		page = &(pconfig->hpages[pconfig->queue->pageIds[pconfig->queue->rear]]);
+		printf("found a dirty page in queue %d\n", queueId);
+		page = &(pconfig->hpages[pconfig->queue[queueId]->pageIds[pconfig->queue[queueId]->rear]]);
 	}
 	return page;
 }
 
 //Executed by a separate CPU thread
-void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream)
+void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream, cudaStream_t* execStream)
 {
 	int i = 0;
-	while(true)
+	int queueId = 0;
+	while(cudaErrorNotReady == cudaStreamQuery(*execStream))
 	{
 		page_t* page;
-		if((page = peekDirtyPage(pconfig)) != NULL)
+		if((page = peekDirtyPage(pconfig, queueId)) != NULL)
 		{
 			cudaMemcpyAsync((void*) ((largeInt) pconfig->hbuffer + page->id * PAGE_SIZE), (void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), PAGE_SIZE, cudaMemcpyDeviceToHost, *serviceStream);
 			cudaMemsetAsync((void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), 0, PAGE_SIZE, *serviceStream);
         		while(cudaSuccess != cudaStreamQuery(*serviceStream));
 
-			int queueSize = pconfig->queue->dirtyRear - pconfig->queue->front;
+			int queueSize = pconfig->queue[queueId]->dirtyRear - pconfig->queue[queueId]->front;
 			printf("one page recycled: %d [queue size: %d]\n", i ++, queueSize);
 
 			//TODO: The following is not gonna be done on the actual page meta data on GPU memory. It is only on hpages (thus pointless)
@@ -225,12 +238,14 @@ void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream)
 			page->next= NULL;
 
 			//[Atomically] advancing rear..
-			int tempRear = pconfig->queue->rear;
+			int tempRear = pconfig->queue[queueId]->rear;
 			tempRear ++;
 			//tempRear %= QUEUE_SIZE;
-			pconfig->queue->rear = tempRear;
+			pconfig->queue[queueId]->rear = tempRear;
 
 		}
+		queueId ++;
+		queueId %= NUM_QUEUES;
 	}
 }
 
