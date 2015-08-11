@@ -148,7 +148,6 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 				return NULL;
 			}
 
-			//newPage->used = 0;
 			newPage->next = parentPage;
 			myGroup->parentPage = newPage;
 

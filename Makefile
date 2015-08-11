@@ -1,4 +1,4 @@
-default:cuda
+default:pthread
 
 cuda:
 	nvcc -o bigdata -arch=sm_30 -rdc=true main.cu paging.cu hashtable.cu 

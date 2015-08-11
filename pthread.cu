@@ -4,6 +4,8 @@
 #include <time.h>
 #include <sys/time.h>
 #include <tcmalloc.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 
 typedef long long int largeInt;
 
@@ -11,6 +13,7 @@ typedef long long int largeInt;
 #define NUM_BUCKETS 1000000
 #define ALIGNMET 8
 #define NUMTHREADS 8
+#define RECORD_SIZE 64
 
 typedef struct hashEntry_t
 {
@@ -30,7 +33,6 @@ typedef struct
 {
 	char* records;
 	hashBucket_t* hashTable;
-	int* recordSizes;
 	int* status;
 	int numRecords;
 	int numThreads;
@@ -143,7 +145,6 @@ void* kernel(void* arg)//char* records, int numRecords, int* recordSizes, int nu
 	dataPackage_t* argument = (dataPackage_t*) arg;
 	char* records = argument->records;
 	int numRecords = argument->numRecords;
-	int* recordSizes  = argument->recordSizes;
 	int numThreads = argument->numThreads;
 	hashBucket_t* hashTable = argument->hashTable;
 	int* status = argument->status;
@@ -158,10 +159,18 @@ void* kernel(void* arg)//char* records, int numRecords, int* recordSizes, int nu
 	for(int i = start; i < end; i += 1)
 	{
 		char* record = &records[i * RECORD_LENGTH];
-		int recordSize = recordSizes[i];
+		int recordSize = 0;
+		char URL[RECORD_SIZE];
+		for(int j = 0; j < RECORD_SIZE; j ++)
+		{
+			char c = record[j];
+			URL[j] = c;
+			if(c != ' ' && c != '\n')
+				recordSize ++;
+		}
 		recordSize = (recordSize % 8 == 0)? recordSize : (recordSize + (8 - (recordSize % 8)));
 		largeInt value = 1;
-		if(addToHashtable(hashTable, record, recordSize, value, 4) == true)
+		if(addToHashtable(hashTable, URL, recordSize, value, 4) == true)
 			status[index * 2] ++;
 		else
 			status[index * 2 + 1] ++;
@@ -172,11 +181,28 @@ void* kernel(void* arg)//char* records, int numRecords, int* recordSizes, int nu
 
 int main(int argc, char** argv)
 {
-	int numRecords = 4500000;
-	if(argc == 2)
+	int fd;
+	char *fdata;
+	struct stat finfo;
+	char *fname;
+
+	if (argc < 2)
 	{
-		numRecords = atoi(argv[1]);
-	}	
+		printf("USAGE: %s <inputfilename>\n", argv[0]);
+		exit(1);
+	}
+
+	fname = argv[1];
+	fd = open(fname, O_RDONLY);
+	fstat(fd, &finfo);
+	printf("Allocating %lluMB for the input file.\n", ((long long unsigned int)finfo.st_size) / (1 << 20));
+	fdata = (char *) malloc(finfo.st_size);
+	size_t readed = read (fd, fdata, finfo.st_size);
+	size_t fileSize = (size_t) finfo.st_size;
+	if(readed != fileSize)
+		printf("Not all of the file is read\n");
+
+	int numRecords = fileSize / RECORD_SIZE;
 
 	int numThreads = NUMTHREADS;
 	numRecords = (numRecords % numThreads == 0)? numRecords : (numRecords + (numThreads - (numRecords % numThreads)));
@@ -185,44 +211,8 @@ int main(int argc, char** argv)
 	
 
 	printf("@INFO: Allocating %dMB for input data\n", (numRecords * RECORD_LENGTH) / (1 << 20));
-	char* records = (char*) malloc(numRecords * RECORD_LENGTH);
-	int* recordSizes = (int*) malloc(numRecords * sizeof(int));
+	char* records = fdata;
 
-	srand(time(NULL));
-
-	for(int i = 0; i < numRecords; i ++)
-	{
-		recordSizes[i] = rand() % (RECORD_LENGTH - 8);
-		if(recordSizes[i] < 14)
-			recordSizes[i] = 14;
-	}
-
-	for(int i = 0; i < numRecords; i ++)
-	{
-		records[i * RECORD_LENGTH + 0] = 'w';
-		records[i * RECORD_LENGTH + 1] = 'w';
-		records[i * RECORD_LENGTH + 2] = 'w';
-		records[i * RECORD_LENGTH + 3] = '.';
-
-		int j = 4;
-		for(; j < recordSizes[i] - 4; j ++)
-			records[i * RECORD_LENGTH + j] = rand() % 26 + 97;
-
-		records[i * RECORD_LENGTH + j + 0] = '.';
-		records[i * RECORD_LENGTH + j + 1] = 'c';
-		records[i * RECORD_LENGTH + j + 2] = 'o';
-		records[i * RECORD_LENGTH + j + 3] = 'm';
-	}
-
-	printf("Some records:\n");
-	for(int i = 0; i < 20; i ++)
-	{
-		for(int j = 0; j < recordSizes[i]; j ++)
-		{
-			printf("%c", records[i * RECORD_LENGTH + j]);
-		}
-		printf("\n");
-	}
 
 	printf("@INFO: done initializing the input data\n");
 	hashBucket_t* hashTable = (hashBucket_t*) malloc(NUM_BUCKETS * sizeof(hashBucket_t));
@@ -235,7 +225,6 @@ int main(int argc, char** argv)
         time_t sec;
         time_t ms;
         time_t diff;
-	
 
 
 	//====================== Calling the kernel ================================//
@@ -255,7 +244,6 @@ int main(int argc, char** argv)
 		argument[i].hashTable = hashTable;
 		argument[i].status = status;
 		argument[i].index = i;
-		argument[i].recordSizes = recordSizes;
 		argument[i].numThreads = NUMTHREADS;
 
 		pthread_create(&thread[i], NULL, kernel, &argument[i]);

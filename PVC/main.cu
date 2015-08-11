@@ -262,8 +262,8 @@ void endGlobalTimer(int tid, char* message)
 	ms = end.tv_usec - global_start[tid].tv_usec;
 	diff = sec * 1000000 + ms;
 
-	printf("[%d] %10s:\t\t%0.1fms\n", tid, message, (double)((double)diff/1000.0));
-	fflush(stdout);
+	//printf("[%d] %10s:\t\t%0.1fms\n", tid, message, (double)((double)diff/1000.0));
+	//fflush(stdout);
 }
 
 void* copyMethodPattern(void* arg)
