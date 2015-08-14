@@ -149,13 +149,11 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 			else
 			{
 				hashBucket_t* newBucket = (hashBucket_t*) multipassMalloc(sizeof(hashBucket_t) + keySizeAligned + valueSizeAligned, group, pconfig);
-
 				if(newBucket != NULL)
 				{
 					//TODO reduce the base offset if not null
 					//newBucket->next = (bucket == NULL)? NULL : (hashBucket_t*) ((largeInt) bucket - (largeInt) pconfig->dbuffer);
 					//group->failed = 1;
-					//revokePage(group->parentPage, pconfig); //TODO uncomment
 					newBucket->next = bucket;
 					group->buckets[offsetWithinGroup] = newBucket;
 

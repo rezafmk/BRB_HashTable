@@ -2,7 +2,6 @@
 #include "hashGlobal.h"
 #include "kernel.cu"
 
-
 #define TEXTITEMSIZE 1
 #define DATAITEMSIZE 1
 #define RECORD_SIZE 64
@@ -622,7 +621,7 @@ int main(int argc, char** argv)
 	cudaMemset(dmyNumbers, 0, 2 * numThreads * sizeof(int));
 
 	//============ initializing the hash table and page table ==================//
-	largeInt availableGPUMemory = (1 << 28);
+	largeInt availableGPUMemory = (1 << 26);
 	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
 	memset(pconfig, 0, sizeof(pagingConfig_t));
 	
@@ -727,6 +726,7 @@ int main(int argc, char** argv)
 
 	while(cudaErrorNotReady == cudaStreamQuery(execStream))
 		usleep(300);	
+
 
 	errR = cudaGetLastError();
 	printf("#######Error after calling the kernel is: %s\n", cudaGetErrorString(errR));
