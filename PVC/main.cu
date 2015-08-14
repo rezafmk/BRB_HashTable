@@ -2,6 +2,7 @@
 #include "hashGlobal.h"
 #include "kernel.cu"
 
+
 #define TEXTITEMSIZE 1
 #define DATAITEMSIZE 1
 #define RECORD_SIZE 64
