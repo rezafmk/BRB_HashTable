@@ -97,7 +97,7 @@ __device__ int atomicDecRefCount(int* refCount)
 	return oldRefCount;
 }
 
-__device__ void atomicNegateRefCount(int* refCount)
+__device__ bool atomicNegateRefCount(int* refCount)
 {
 	int oldRefCount = *refCount;
 	int assume;
@@ -105,9 +105,11 @@ __device__ void atomicNegateRefCount(int* refCount)
 	{
 		assume = oldRefCount;
 		if(oldRefCount >= 0)
-			oldRefCount = (int) atomicCAS((unsigned*) refCount, (unsigned) oldRefCount, -oldRefCount);
+			oldRefCount = (int) atomicCAS((unsigned*) refCount, (unsigned) oldRefCount, ((oldRefCount * (-1)) - 1));
 
 	} while(oldRefCount != assume);
+
+	return (oldRefCount >= 0);
 	
 }
 
@@ -121,8 +123,7 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 
 	bucketGroup_t* group = &(hconfig->groups[groupNo]);
 	
-	// Incrementing the `refCount`. If refCount was negative (which means group is failed), return
-	if(atomicAttemptIncRefCount(&(group->refCount)) != true)
+	if(group->inactive == 1)
 		return false;
 
 	hashBucket_t* bucket = group->buckets[offsetWithinGroup];
@@ -165,22 +166,20 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 				}
 				else
 				{
-					atomicNegateRefCount(&(group->refCount));
+					atomicInc((unsigned*) &(group->failedRequests), INT_MAX);
 					success = false;
+					page_t* pagechain = group->parentPage;
+					while(pagechain != NULL)
+					{
+						pagechain->needed = 1;
+						pagechain = pagechain->next;
+					}
 				}
 			}
 
 			atomicExch((unsigned*) &(group->locks[offsetWithinGroup]), 0);
 		}
 	} while(oldLock == 1);
-
-	int oldRefCount = atomicDecRefCount(&(group->refCount));
-	if(oldRefCount == -1)
-	{
-		long long unsigned pageAddress = (long long unsigned) group->parentPage;
-		page_t* oldPage = (page_t*) atomicCAS((long long unsigned*) &(group->parentPage), pageAddress, NULL);
-		revokePage(oldPage, pconfig);
-	}
 
 	return success;
 }

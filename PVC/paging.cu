@@ -29,6 +29,13 @@ void initPaging(largeInt availableGPUMemory, pagingConfig_t* pconfig)
 	cudaMalloc((void**) &(pconfig->pages), pconfig->totalNumPages * sizeof(page_t));
 	cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
 
+	pconfig->hpoolOfPages = (int*) malloc(pconfig->totalNumPages * sizeof(int));
+	for(int i = 0; i < pconfig->totalNumPages; i ++)
+		pconfig->hpoolOfPages[i] = i;
+	cudaMalloc((void**) &(pconfig->poolOfPages), pconfig->totalNumPages * sizeof(int));
+	cudaMemcpy(pconfig->poolOfPages, pconfig->hpoolOfPages, pconfig->totalNumPages * sizeof(int), cudaMemcpyHostToDevice);
+	pconfig->poolSize = pconfig->totalNumPages;
+
 	printf("@INFO: done doing initPaging\n");
 }
 
@@ -177,15 +184,11 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 __device__ page_t* allocateNewPage(pagingConfig_t* pconfig)
 {
 	int pageIdToAllocate = atomicInc((unsigned*) &(pconfig->initialPageAssignedCounter), INT_MAX);
-	if(pageIdToAllocate < pconfig->initialPageAssignedCap)
+	if(pageIdToAllocate < pconfig->poolSize)
 	{
-		return &(pconfig->pages[pageIdToAllocate]);
+		return &(pconfig->pages[pconfig->poolOfPages[pageIdToAllocate]]);
 	}
-	else
-	{
-		//atomiPop will pop an item only if `minimmQuerySize` free entry is available, NULL otherwise.
-		return popCleanPage(pconfig);
-	}
+	return NULL;
 }
 
 //Freeing the chain pages

@@ -7,7 +7,7 @@
 #include <time.h>
 #include <sys/time.h>
 
-#define PAGE_SIZE (1 << 19)
+#define PAGE_SIZE (1 << 18)
 #define GROUP_SIZE (PAGE_SIZE / 64)
 #define ALIGNMET 8
 
@@ -32,7 +32,8 @@ typedef struct page_t
 {
 	struct page_t* next;
 	unsigned used;
-	unsigned id;
+	short id;
+	short needed;
 } page_t;
 
 typedef struct
@@ -47,6 +48,10 @@ typedef struct
 	//This will be a queue, holding pointers to pages that are available
 	pageQueue_t* queue;
 	pageQueue_t* dqueue;
+
+	int* hpoolOfPages;
+	int* poolOfPages;
+	int poolSize;
 
 	int initialPageAssignedCounter;
 	int initialPageAssignedCap;
@@ -72,6 +77,8 @@ typedef struct
 	unsigned pageLock;
 	volatile int failed;
 	int refCount;
+	int inactive;
+	int failedRequests;
 
 } bucketGroup_t;
 
@@ -102,5 +109,5 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSize, hashtableConfig_t* hconfig, pagingConfig_t* pconfig);
 __device__ bool atomicAttemptIncRefCount(int* refCount);
 __device__ int atomicDecRefCount(int* refCount);
-__device__ void atomicNegateRefCount(int* refCount);
+__device__ bool atomicNegateRefCount(int* refCount);
 #endif

@@ -34,7 +34,8 @@ __global__ void wordCountKernelMultipass(
 				int* myNumbers,
 				int numThreads,
 				pagingConfig_t* pconfig,
-				hashtableConfig_t* hconfig
+				hashtableConfig_t* hconfig,
+				char* states
 				)
 {
 	int index = TID2;
@@ -209,10 +210,14 @@ __global__ void wordCountKernelMultipass(
 				int urlSize = 0;
 				for(int j = 0; j < RECORD_SIZE; j ++)
 				{
-					char c = (textData + (s * iterations * RECORD_SIZE * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
-					URL[j] = c;
-					if(c != ' ' && c != '\n')
-						urlSize ++;
+
+					if(states[i] == (char) 0)
+					{
+						char c = (textData + (s * iterations * RECORD_SIZE * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
+						URL[j] = c;
+						if(c != ' ' && c != '\n')
+							urlSize ++;
+					}
 					//sum += (int) c;
 
 					step ++;
@@ -220,11 +225,14 @@ __global__ void wordCountKernelMultipass(
 					step %= COALESCEITEMSIZE;
 				}
 
-				largeInt value = 1;
-				if(addToHashtable((void*) URL, urlSize, (void*) &value, sizeof(largeInt), hconfig, pconfig) == true)
-					myNumbers[index * 2] ++;
-				else
-					myNumbers[index * 2 + 1] ++;
+				if(states[i] == (char) 0)
+				{
+					largeInt value = 1;
+					if(addToHashtable((void*) URL, urlSize, (void*) &value, sizeof(largeInt), hconfig, pconfig) == true)
+						myNumbers[index * 2] ++;
+					else
+						myNumbers[index * 2 + 1] ++;
+				}
 					
 
 			}
@@ -621,7 +629,7 @@ int main(int argc, char** argv)
 	cudaMemset(dmyNumbers, 0, 2 * numThreads * sizeof(int));
 
 	//============ initializing the hash table and page table ==================//
-	largeInt availableGPUMemory = (1 << 26);
+	largeInt availableGPUMemory = (1 << 28);
 	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
 	memset(pconfig, 0, sizeof(pagingConfig_t));
 	
@@ -641,6 +649,11 @@ int main(int argc, char** argv)
 	hashtableConfig_t* dhconfig;
 	cudaMalloc((void**) &dhconfig, sizeof(hashtableConfig_t));
 	cudaMemcpy(dhconfig, hconfig, sizeof(hashtableConfig_t), cudaMemcpyHostToDevice);
+
+	char* dstates;
+	cudaMalloc((void**) &dstates, numRecords * sizeof(char));
+	cudaMemset(dstates, 0, numRecords * sizeof(char));
+
 
 	cudaStream_t serviceStream;
 	cudaStreamCreate(&serviceStream);
@@ -674,7 +687,8 @@ int main(int argc, char** argv)
 			dmyNumbers,
 			numThreads,
 			dpconfig,
-			dhconfig
+			dhconfig,
+			dstates
 			);
 
 	
@@ -742,6 +756,39 @@ int main(int argc, char** argv)
 	diff = sec * 1000000 + ms;
 
 	printf("\n%10s:\t\t%0.1fms\n", "Multipass wordcount", (double)((double)diff/1000.0));
+
+	cudaMemcpy(pconfig->hpages, pconfig->pages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyDeviceToHost);
+
+	int neededCount = 0;
+	for(int i = 0; i < pconfig->totalNumPages; i ++)
+	{
+		if(pconfig->hpages[i].needed == 1)
+			neededCount ++;
+		else
+		{
+			cudaMemset((void*) ((largeInt) pconfig->dbuffer + pconfig->hpages[i].id * PAGE_SIZE), 0, PAGE_SIZE);
+			
+		}
+	}
+
+	printf("Needed pages: %d [out of %d]\n", neededCount, pconfig->totalNumPages);
+
+	int numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
+	bucketGroup_t* groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
+	cudaMemcpy(groups, hconfig->groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
+
+	int max = 0, min = INT_MAX, total = 0;
+	for(int i = 0; i < numGroups; i ++)
+	{
+		if(groups[i].failedRequests < min)
+			min = groups[i].failedRequests;
+		else if(groups[i].failedRequests > max)
+			max = groups[i].failedRequests;
+		total += groups[i].failedRequests;
+	}
+	total /= numGroups;
+	printf("Number of requests:\n\tmin: %d\n\tmax: %d\n\taverage: %d\n", min, max, total);
+
 
 	int* myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
 	cudaMemcpy(myNumbers, dmyNumbers, 2 * numThreads * sizeof(int), cudaMemcpyDeviceToHost);
