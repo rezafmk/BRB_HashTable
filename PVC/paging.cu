@@ -29,12 +29,12 @@ void initPaging(largeInt availableGPUMemory, pagingConfig_t* pconfig)
 	cudaMalloc((void**) &(pconfig->pages), pconfig->totalNumPages * sizeof(page_t));
 	cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
 
+	pconfig->poolSize = pconfig->totalNumPages;
 	pconfig->hpoolOfPages = (int*) malloc(pconfig->totalNumPages * sizeof(int));
-	for(int i = 0; i < pconfig->totalNumPages; i ++)
+	for(int i = 0; i < pconfig->poolSize; i ++)
 		pconfig->hpoolOfPages[i] = i;
 	cudaMalloc((void**) &(pconfig->poolOfPages), pconfig->totalNumPages * sizeof(int));
 	cudaMemcpy(pconfig->poolOfPages, pconfig->hpoolOfPages, pconfig->totalNumPages * sizeof(int), cudaMemcpyHostToDevice);
-	pconfig->poolSize = pconfig->totalNumPages;
 
 	printf("@INFO: done doing initPaging\n");
 }
@@ -115,7 +115,7 @@ __device__ page_t* popCleanPage(pagingConfig_t* pconfig)
 
 
 //TODO: currently we don't mark a bucket group to not ask for more memory if it previously revoked its pages
-__device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingConfig_t* pconfig)
+__device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingConfig_t* pconfig, int groupNo)
 {
 	page_t* parentPage = myGroup->parentPage;
 
@@ -151,7 +151,7 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 				}
 			}
 			
-			newPage = allocateNewPage(pconfig);
+			newPage = allocateNewPage(pconfig, groupNo);
 
 			//If no more page exists and no page is used yet (for this bucketgroup), don't do anything
 			if(newPage == NULL)
@@ -181,7 +181,7 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 	}
 }
 
-__device__ page_t* allocateNewPage(pagingConfig_t* pconfig)
+__device__ page_t* allocateNewPage(pagingConfig_t* pconfig, int groupNo)
 {
 	int pageIdToAllocate = atomicInc((unsigned*) &(pconfig->initialPageAssignedCounter), INT_MAX);
 	if(pageIdToAllocate < pconfig->poolSize)

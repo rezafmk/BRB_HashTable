@@ -35,7 +35,8 @@ __global__ void wordCountKernelMultipass(
 				int numThreads,
 				pagingConfig_t* pconfig,
 				hashtableConfig_t* hconfig,
-				char* states
+				char* states,
+				bool* failedFlag
 				)
 {
 	int index = TID2;
@@ -229,9 +230,15 @@ __global__ void wordCountKernelMultipass(
 				{
 					largeInt value = 1;
 					if(addToHashtable((void*) URL, urlSize, (void*) &value, sizeof(largeInt), hconfig, pconfig) == true)
+					{
 						myNumbers[index * 2] ++;
+						states[i] = (char) 1;
+					}
 					else
+					{
 						myNumbers[index * 2 + 1] ++;
+						*failedFlag = true;
+					}
 				}
 					
 
@@ -654,6 +661,14 @@ int main(int argc, char** argv)
 	cudaMalloc((void**) &dstates, numRecords * sizeof(char));
 	cudaMemset(dstates, 0, numRecords * sizeof(char));
 
+	bool* dfailedFlag;
+	cudaMalloc((void**) &dfailedFlag, sizeof(bool));
+	cudaMemset(dfailedFlag, 0, sizeof(bool));
+
+	bool failedFlag = false;
+
+	
+
 
 	cudaStream_t serviceStream;
 	cudaStreamCreate(&serviceStream);
@@ -669,141 +684,180 @@ int main(int argc, char** argv)
 	errR = cudaGetLastError();
 	printf("#######Error before calling the kernel is: %s\n", cudaGetErrorString(errR));
 
-	gettimeofday(&partial_start, NULL);
-
-	printf("Calling the kernel...\n");
-
-	wordCountKernelMultipass<<<grid, block2, 0, execStream>>>(
-			phony, 
-			numRecords, //TODO fill this
-			textAddrs,
-			textData,
-			flags,
-			gpuFlags,
-			stridesSpace1,
-			firstLastAddrsSpace1,
-			iterations,
-			epochNum,
-			dmyNumbers,
-			numThreads,
-			dpconfig,
-			dhconfig,
-			dstates
-			);
-
-	
-	pthread_t threads[MAXBLOCKS];
-	dataPackage* argument[MAXBLOCKS];
-
-	for(int m = 0; m < MAXBLOCKS; m ++)
+	do
 	{
-		startGlobalTimer(m);  //prediction
-		argument[m] = (dataPackage*) malloc(sizeof(dataPackage));
-		argument[m]->streamPtr = &copyStream;
-		argument[m]->execStream = &execStream;
-		argument[m]->flags = hostCompleteFlag;
-		argument[m]->gpuFlags = gpuFlags;
-		argument[m]->fdata = fdata;
-		argument[m]->myBlock = m;
-		argument[m]->threadBlockSize = BLOCKSIZE;
-		argument[m]->textItems = iterations;
-		argument[m]->textHostBuffer[0] = hostTextHostBuffer;
-		argument[m]->textHostBuffer[1] = hostTextHostBuffer + iterations * numThreads * RECORD_SIZE;
-		argument[m]->textHostBuffer[2] = hostTextHostBuffer + iterations * numThreads * RECORD_SIZE * 2;
-		argument[m]->textAddrs[0] = hostTextAddrHostBuffer;
-		argument[m]->textAddrs[1] = hostTextAddrHostBuffer + iterations * numThreads;
-		argument[m]->textAddrs[2] = hostTextAddrHostBuffer +  iterations * numThreads * 2;
-		argument[m]->textData[0] = textData;
-		argument[m]->textData[1] = textData + iterations * numThreads * RECORD_SIZE;
-		argument[m]->textData[2] = textData +  iterations * numThreads * RECORD_SIZE * 2;
-		argument[m]->stridesSpace1[0] = hostStridesSpace1;
-		argument[m]->stridesSpace1[1] = hostStridesSpace1 + numThreads;
-		argument[m]->stridesSpace1[2] = hostStridesSpace1 + numThreads * 2;
-		argument[m]->epochDuration = iterations;
-		argument[m]->firstLastAddrsSpace1[0] = hostFirstLastSpace1;
-		argument[m]->firstLastAddrsSpace1[1] = hostFirstLastSpace1 + numThreads;
-		argument[m]->firstLastAddrsSpace1[2] = hostFirstLastSpace1 + numThreads * 2;
-		argument[m]->textItemSize = RECORD_SIZE;
-		argument[m]->sourceSpaceSize1 = fileSize;
+		gettimeofday(&partial_start, NULL);
 
-		pthread_create(&threads[m], NULL, pipelineData, (void*) argument[m]);
-	}
+		printf("Calling the kernel...\n");
 
-	pthread_t thread;
-	dataPackage_t datapkgArgument;
-
-	datapkgArgument.pconfig = pconfig;
-	datapkgArgument.serviceStream = &serviceStream;
-	datapkgArgument.execStream = &execStream;
-
-	pthread_create(&thread, NULL, recyclePages, &datapkgArgument);
-
-	while(cudaErrorNotReady == cudaStreamQuery(execStream))
-		usleep(300);	
+		wordCountKernelMultipass<<<grid, block2, 0, execStream>>>(
+				phony, 
+				numRecords, //TODO fill this
+				textAddrs,
+				textData,
+				flags,
+				gpuFlags,
+				stridesSpace1,
+				firstLastAddrsSpace1,
+				iterations,
+				epochNum,
+				dmyNumbers,
+				numThreads,
+				dpconfig,
+				dhconfig,
+				dstates,
+				dfailedFlag
+				);
 
 
-	errR = cudaGetLastError();
-	printf("#######Error after calling the kernel is: %s\n", cudaGetErrorString(errR));
+		pthread_t threads[MAXBLOCKS];
+		dataPackage* argument[MAXBLOCKS];
 
-	cudaThreadSynchronize();
-
-	for(int m = 0; m < MAXBLOCKS; m ++)
-		endGlobalTimer(m, "@@ computation");
-
-	gettimeofday(&partial_end, NULL);
-	sec = partial_end.tv_sec - partial_start.tv_sec;
-	ms = partial_end.tv_usec - partial_start.tv_usec;
-	diff = sec * 1000000 + ms;
-
-	printf("\n%10s:\t\t%0.1fms\n", "Multipass wordcount", (double)((double)diff/1000.0));
-
-	cudaMemcpy(pconfig->hpages, pconfig->pages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyDeviceToHost);
-
-	int neededCount = 0;
-	for(int i = 0; i < pconfig->totalNumPages; i ++)
-	{
-		if(pconfig->hpages[i].needed == 1)
-			neededCount ++;
-		else
+		for(int m = 0; m < MAXBLOCKS; m ++)
 		{
-			cudaMemset((void*) ((largeInt) pconfig->dbuffer + pconfig->hpages[i].id * PAGE_SIZE), 0, PAGE_SIZE);
-			
+			startGlobalTimer(m);  //prediction
+			argument[m] = (dataPackage*) malloc(sizeof(dataPackage));
+			argument[m]->streamPtr = &copyStream;
+			argument[m]->execStream = &execStream;
+			argument[m]->flags = hostCompleteFlag;
+			argument[m]->gpuFlags = gpuFlags;
+			argument[m]->fdata = fdata;
+			argument[m]->myBlock = m;
+			argument[m]->threadBlockSize = BLOCKSIZE;
+			argument[m]->textItems = iterations;
+			argument[m]->textHostBuffer[0] = hostTextHostBuffer;
+			argument[m]->textHostBuffer[1] = hostTextHostBuffer + iterations * numThreads * RECORD_SIZE;
+			argument[m]->textHostBuffer[2] = hostTextHostBuffer + iterations * numThreads * RECORD_SIZE * 2;
+			argument[m]->textAddrs[0] = hostTextAddrHostBuffer;
+			argument[m]->textAddrs[1] = hostTextAddrHostBuffer + iterations * numThreads;
+			argument[m]->textAddrs[2] = hostTextAddrHostBuffer +  iterations * numThreads * 2;
+			argument[m]->textData[0] = textData;
+			argument[m]->textData[1] = textData + iterations * numThreads * RECORD_SIZE;
+			argument[m]->textData[2] = textData +  iterations * numThreads * RECORD_SIZE * 2;
+			argument[m]->stridesSpace1[0] = hostStridesSpace1;
+			argument[m]->stridesSpace1[1] = hostStridesSpace1 + numThreads;
+			argument[m]->stridesSpace1[2] = hostStridesSpace1 + numThreads * 2;
+			argument[m]->epochDuration = iterations;
+			argument[m]->firstLastAddrsSpace1[0] = hostFirstLastSpace1;
+			argument[m]->firstLastAddrsSpace1[1] = hostFirstLastSpace1 + numThreads;
+			argument[m]->firstLastAddrsSpace1[2] = hostFirstLastSpace1 + numThreads * 2;
+			argument[m]->textItemSize = RECORD_SIZE;
+			argument[m]->sourceSpaceSize1 = fileSize;
+
+			pthread_create(&threads[m], NULL, pipelineData, (void*) argument[m]);
 		}
-	}
 
-	printf("Needed pages: %d [out of %d]\n", neededCount, pconfig->totalNumPages);
+		pthread_t thread;
+		dataPackage_t datapkgArgument;
 
-	int numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
-	bucketGroup_t* groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
-	cudaMemcpy(groups, hconfig->groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
+		datapkgArgument.pconfig = pconfig;
+		datapkgArgument.serviceStream = &serviceStream;
+		datapkgArgument.execStream = &execStream;
 
-	int max = 0, min = INT_MAX, total = 0;
-	for(int i = 0; i < numGroups; i ++)
-	{
-		if(groups[i].failedRequests < min)
-			min = groups[i].failedRequests;
-		else if(groups[i].failedRequests > max)
-			max = groups[i].failedRequests;
-		total += groups[i].failedRequests;
-	}
-	total /= numGroups;
-	printf("Number of requests:\n\tmin: %d\n\tmax: %d\n\taverage: %d\n", min, max, total);
+		pthread_create(&thread, NULL, recyclePages, &datapkgArgument);
+
+		while(cudaErrorNotReady == cudaStreamQuery(execStream))
+			usleep(300);	
 
 
-	int* myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
-	cudaMemcpy(myNumbers, dmyNumbers, 2 * numThreads * sizeof(int), cudaMemcpyDeviceToHost);
+		errR = cudaGetLastError();
+		printf("#######Error after calling the kernel is: %s\n", cudaGetErrorString(errR));
 
-	largeInt totalSuccess = 0;
-	largeInt totalFailed = 0;
-	for(int i = 0; i < numThreads; i ++)
-	{
-		totalSuccess += myNumbers[i * 2];
-		totalFailed += myNumbers[i * 2 + 1];
-	}
+		cudaThreadSynchronize();
 
-	printf("Total success: %lld\n", totalSuccess);
-	printf("Total failure: %lld\n", totalFailed);
+		cudaMemcpy(&failedFlag, dfailedFlag, sizeof(bool), cudaMemcpyDeviceToHost);
+		cudaMemset(dfailedFlag, 0, sizeof(bool));
 
+		for(int m = 0; m < MAXBLOCKS; m ++)
+			endGlobalTimer(m, "@@ computation");
+
+		gettimeofday(&partial_end, NULL);
+		sec = partial_end.tv_sec - partial_start.tv_sec;
+		ms = partial_end.tv_usec - partial_start.tv_usec;
+		diff = sec * 1000000 + ms;
+
+		printf("\n%10s:\t\t%0.1fms\n", "Multipass wordcount", (double)((double)diff/1000.0));
+
+		cudaMemcpy(pconfig, dpconfig, sizeof(pagingConfig_t), cudaMemcpyDeviceToHost);
+
+		cudaMemcpy(pconfig->hpages, pconfig->pages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyDeviceToHost);
+
+		int neededCount = 0;
+		pconfig->poolSize = 0;
+
+		for(int i = 0; i < pconfig->totalNumPages; i ++)
+		{
+			if(pconfig->hpages[i].needed == 1)
+			{
+				neededCount ++;
+			}
+			else
+			{
+				cudaMemset((void*) ((largeInt) pconfig->dbuffer + pconfig->hpages[i].id * PAGE_SIZE), 0, PAGE_SIZE);
+				pconfig->hpages[i].used = 0;
+				pconfig->hpoolOfPages[pconfig->poolSize] = i;
+				pconfig->poolSize ++;
+			}
+			pconfig->hpages[i].needed = 0;
+		}
+		cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
+		pconfig->initialPageAssignedCounter = 0;
+
+		cudaMemcpy(pconfig->poolOfPages, pconfig->hpoolOfPages, pconfig->poolSize * sizeof(int), cudaMemcpyHostToDevice);
+		cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
+
+		printf("%d pages were memset to be reused\n", pconfig->poolSize);
+		printf("Needed pages: %d [out of %d]\n", neededCount, pconfig->totalNumPages);
+
+		int numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
+		bucketGroup_t* groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
+		cudaMemcpy(groups, hconfig->groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
+
+		int max = 0, min = INT_MAX, total = 0;
+		int neededGroupCount = 0;
+		for(int i = 0; i < numGroups; i ++)
+		{
+			if(groups[i].failedRequests < min)
+				min = groups[i].failedRequests;
+			else if(groups[i].failedRequests > max)
+				max = groups[i].failedRequests;
+			total += groups[i].failedRequests;
+			if(groups[i].needed == 0)
+			{
+				groups[i].inactive = 1;
+			}
+			else
+			{
+				neededGroupCount ++;
+				groups[i].inactive = 0;
+			}
+			
+			
+			//groups[i].parentPage = NULL;
+		}
+		total /= numGroups;
+		printf("Number of requests:\n\tmin: %d\n\tmax: %d\n\taverage: %d\n\ttotal number of needed groups: %d [out of %d]\n", min, max, total, neededGroupCount, numGroups);
+		cudaMemcpy(hconfig->groups, groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyHostToDevice);
+
+
+
+
+		int* myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
+		cudaMemcpy(myNumbers, dmyNumbers, 2 * numThreads * sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemset(dmyNumbers, 0, 2 * numThreads * sizeof(int));
+
+		largeInt totalSuccess = 0;
+		largeInt totalFailed = 0;
+		for(int i = 0; i < numThreads; i ++)
+		{
+			totalSuccess += myNumbers[i * 2];
+			totalFailed += myNumbers[i * 2 + 1];
+		}
+
+		printf("Total success: %lld\n", totalSuccess);
+		printf("Total failure: %lld\n", totalFailed);
+
+	} while(failedFlag);
 
 	return 0;
 }

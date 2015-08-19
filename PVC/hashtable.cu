@@ -149,7 +149,7 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 			}
 			else
 			{
-				hashBucket_t* newBucket = (hashBucket_t*) multipassMalloc(sizeof(hashBucket_t) + keySizeAligned + valueSizeAligned, group, pconfig);
+				hashBucket_t* newBucket = (hashBucket_t*) multipassMalloc(sizeof(hashBucket_t) + keySizeAligned + valueSizeAligned, group, pconfig, groupNo);
 				if(newBucket != NULL)
 				{
 					//TODO reduce the base offset if not null
@@ -167,6 +167,7 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 				else
 				{
 					atomicInc((unsigned*) &(group->failedRequests), INT_MAX);
+					group->needed = 1;
 					success = false;
 					page_t* pagechain = group->parentPage;
 					while(pagechain != NULL)
