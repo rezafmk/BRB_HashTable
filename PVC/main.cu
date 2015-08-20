@@ -793,6 +793,7 @@ int main(int argc, char** argv)
 			pconfig->hpoolOfPages[pconfig->poolSize] = i;
 			pconfig->poolSize ++;
 			pconfig->hpages[i].needed = 0;
+			pconfig->hpages[i].next = NULL;
 		}
 		cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
 		pconfig->initialPageAssignedCounter = 0;
@@ -816,15 +817,6 @@ int main(int argc, char** argv)
 			else if(groups[i].failedRequests > max)
 				max = groups[i].failedRequests;
 			total += groups[i].failedRequests;
-			if(groups[i].needed == 0)
-			{
-				groups[i].inactive = 1;
-			}
-			else
-			{
-				neededGroupCount ++;
-				groups[i].inactive = 0;
-			}
 
 			for(int j = 0; j < GROUP_SIZE; j ++)
 				groups[i].isNextDead[j] = 1;
