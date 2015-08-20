@@ -64,7 +64,8 @@ typedef struct
 typedef struct hashBucket_t
 {
 	struct hashBucket_t* next;
-	unsigned lock;
+	short isNextDead;
+	unsigned short lock;
 	short keySize;
 	short valueSize;
 } hashBucket_t;
@@ -73,6 +74,7 @@ typedef struct
 {
 	hashBucket_t* buckets[GROUP_SIZE];
 	unsigned locks[GROUP_SIZE];
+	short isNextDead[GROUP_SIZE];
 	page_t* parentPage;
 	unsigned pageLock;
 	volatile int failed;

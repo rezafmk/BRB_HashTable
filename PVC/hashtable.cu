@@ -51,7 +51,10 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 		if(success)
 			break;
 
-		bucket = bucket->next;
+		if(bucket->isNextDead == 0)
+			bucket = bucket->next;
+		else
+			bucket = NULL;
 	}
 
 	return bucket;
@@ -142,6 +145,7 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 		{
 			//First see if the key already exists in one of the entries of this bucket
 			//The returned bucket is the 'entry' in which the key exists
+			//if(group->isNextDead[offsetWithinGroup] != 1 && (existingBucket = containsKey(bucket, key, keySize)) != NULL)
 			if((existingBucket = containsKey(bucket, key, keySize)) != NULL)
 			{
 				void* oldValue = (void*) ((largeInt) existingBucket + sizeof(hashBucket_t) + keySizeAligned);
@@ -156,7 +160,11 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 					//newBucket->next = (bucket == NULL)? NULL : (hashBucket_t*) ((largeInt) bucket - (largeInt) pconfig->dbuffer);
 					//group->failed = 1;
 					newBucket->next = bucket;
+					if(group->isNextDead[offsetWithinGroup] == 1)
+						newBucket->isNextDead = 1;
+						
 					group->buckets[offsetWithinGroup] = newBucket;
+					group->isNextDead[offsetWithinGroup] = 0;
 
 					//TODO: this assumes that input key is aligned by ALIGNMENT, which is not a safe assumption
 					for(int i = 0; i < (keySizeAligned / ALIGNMET); i ++)
@@ -166,6 +174,7 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 				}
 				else
 				{
+					//TODO shouldn't these be cleared in CPU side..
 					atomicInc((unsigned*) &(group->failedRequests), INT_MAX);
 					group->needed = 1;
 					success = false;

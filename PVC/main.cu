@@ -831,7 +831,9 @@ int main(int argc, char** argv)
 				neededGroupCount ++;
 				groups[i].inactive = 0;
 			}
-			
+
+			for(int j = 0; j < GROUP_SIZE; j ++)
+				groups[i].isNextDead[j] = 1;
 			
 			//groups[i].parentPage = NULL;
 		}
