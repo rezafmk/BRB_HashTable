@@ -145,8 +145,7 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 		{
 			//First see if the key already exists in one of the entries of this bucket
 			//The returned bucket is the 'entry' in which the key exists
-			//if(group->isNextDead[offsetWithinGroup] != 1 && (existingBucket = containsKey(bucket, key, keySize)) != NULL)
-			if((existingBucket = containsKey(bucket, key, keySize)) != NULL)
+			if(group->isNextDead[offsetWithinGroup] != 1 && (existingBucket = containsKey(bucket, key, keySize)) != NULL)
 			{
 				void* oldValue = (void*) ((largeInt) existingBucket + sizeof(hashBucket_t) + keySizeAligned);
 				resolveSameKeyAddition(key, value, oldValue);

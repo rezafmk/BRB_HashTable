@@ -787,17 +787,11 @@ int main(int argc, char** argv)
 
 		for(int i = 0; i < pconfig->totalNumPages; i ++)
 		{
-			if(pconfig->hpages[i].needed == 1)
-			{
-				neededCount ++;
-			}
-			else
-			{
-				cudaMemset((void*) ((largeInt) pconfig->dbuffer + pconfig->hpages[i].id * PAGE_SIZE), 0, PAGE_SIZE);
-				pconfig->hpages[i].used = 0;
-				pconfig->hpoolOfPages[pconfig->poolSize] = i;
-				pconfig->poolSize ++;
-			}
+
+			cudaMemset((void*) ((largeInt) pconfig->dbuffer + pconfig->hpages[i].id * PAGE_SIZE), 0, PAGE_SIZE);
+			pconfig->hpages[i].used = 0;
+			pconfig->hpoolOfPages[pconfig->poolSize] = i;
+			pconfig->poolSize ++;
 			pconfig->hpages[i].needed = 0;
 		}
 		cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
