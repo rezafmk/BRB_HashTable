@@ -788,10 +788,10 @@ int main(int argc, char** argv)
 		int neededCount = 0;
 		pconfig->poolSize = 0;
 
+		cudaMemcpy(pconfig->hbuffer, pconfig->dbuffer, pconfig->totalNumPages * PAGE_SIZE, cudaMemcpyDeviceToHost);
+		cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
 		for(int i = 0; i < pconfig->totalNumPages; i ++)
 		{
-
-			cudaMemset((void*) ((largeInt) pconfig->dbuffer + pconfig->hpages[i].id * PAGE_SIZE), 0, PAGE_SIZE);
 			pconfig->hpages[i].used = 0;
 			pconfig->hpoolOfPages[pconfig->poolSize] = i;
 			pconfig->poolSize ++;

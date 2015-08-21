@@ -154,7 +154,7 @@ void* kernel(void* arg)//char* records, int numRecords, int* recordSizes, int nu
 	
 	int start = chunkSize * index;
 	int end = start + chunkSize;
-	
+
 	
 	for(int i = start; i < end; i += 1)
 	{
