@@ -684,9 +684,9 @@ int main(int argc, char** argv)
 	errR = cudaGetLastError();
 	printf("#######Error before calling the kernel is: %s\n", cudaGetErrorString(errR));
 
+		gettimeofday(&partial_start, NULL);
 	do
 	{
-		gettimeofday(&partial_start, NULL);
 
 		printf("Calling the kernel...\n");
 
@@ -747,6 +747,7 @@ int main(int argc, char** argv)
 			pthread_create(&threads[m], NULL, pipelineData, (void*) argument[m]);
 		}
 
+#if 0
 		pthread_t thread;
 		dataPackage_t datapkgArgument;
 
@@ -755,8 +756,10 @@ int main(int argc, char** argv)
 		datapkgArgument.execStream = &execStream;
 
 		pthread_create(&thread, NULL, recyclePages, &datapkgArgument);
+#endif
 
-		while(cudaErrorNotReady == cudaStreamQuery(execStream))
+		//while(cudaErrorNotReady == cudaStreamQuery(execStream))
+		while(cudaSuccess != cudaStreamQuery(execStream))
 			usleep(300);	
 
 
@@ -765,19 +768,19 @@ int main(int argc, char** argv)
 
 		cudaThreadSynchronize();
 
+
+		//======================= Some reseting ===========================
+
+		memset((void*) hostCompleteFlag, 0, flagSize);
+		cudaMemset(gpuFlags, 0, flagSize / 2);
+
 		cudaMemcpy(&failedFlag, dfailedFlag, sizeof(bool), cudaMemcpyDeviceToHost);
 		cudaMemset(dfailedFlag, 0, sizeof(bool));
 
 		for(int m = 0; m < MAXBLOCKS; m ++)
 			endGlobalTimer(m, "@@ computation");
 
-		gettimeofday(&partial_end, NULL);
-		sec = partial_end.tv_sec - partial_start.tv_sec;
-		ms = partial_end.tv_usec - partial_start.tv_usec;
-		diff = sec * 1000000 + ms;
-
-		printf("\n%10s:\t\t%0.1fms\n", "Multipass wordcount", (double)((double)diff/1000.0));
-
+		
 		cudaMemcpy(pconfig, dpconfig, sizeof(pagingConfig_t), cudaMemcpyDeviceToHost);
 
 		cudaMemcpy(pconfig->hpages, pconfig->pages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyDeviceToHost);
@@ -812,22 +815,12 @@ int main(int argc, char** argv)
 		int neededGroupCount = 0;
 		for(int i = 0; i < numGroups; i ++)
 		{
-			if(groups[i].failedRequests < min)
-				min = groups[i].failedRequests;
-			else if(groups[i].failedRequests > max)
-				max = groups[i].failedRequests;
-			total += groups[i].failedRequests;
-
 			for(int j = 0; j < GROUP_SIZE; j ++)
 				groups[i].isNextDead[j] = 1;
-			
-			//groups[i].parentPage = NULL;
 		}
 		total /= numGroups;
 		printf("Number of requests:\n\tmin: %d\n\tmax: %d\n\taverage: %d\n\ttotal number of needed groups: %d [out of %d]\n", min, max, total, neededGroupCount, numGroups);
 		cudaMemcpy(hconfig->groups, groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyHostToDevice);
-
-
 
 
 		int* myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
@@ -846,6 +839,14 @@ int main(int argc, char** argv)
 		printf("Total failure: %lld\n", totalFailed);
 
 	} while(failedFlag);
+
+	gettimeofday(&partial_end, NULL);
+	sec = partial_end.tv_sec - partial_start.tv_sec;
+	ms = partial_end.tv_usec - partial_start.tv_usec;
+	diff = sec * 1000000 + ms;
+
+	printf("\n%10s:\t\t%0.1fms\n", "Multipass wordcount", (double)((double)diff/1000.0));
+
 
 	return 0;
 }
