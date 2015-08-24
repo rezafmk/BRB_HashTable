@@ -14,9 +14,6 @@ void initPaging(largeInt availableGPUMemory, pagingConfig_t* pconfig)
 	cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
 	printf("@INFO: done allocating base buffer in GPU memory\n");
 
-	pconfig->hbuffer = malloc((unsigned) HOST_BUFFER_SIZE);
-	memset(pconfig->hbuffer, 0, (unsigned) HOST_BUFFER_SIZE);
-
 	//This has to be allocated GPU-side
 	pconfig->hpages = (page_t*) malloc(pconfig->totalNumPages * sizeof(page_t));
 	for(int i = 0; i < pconfig->totalNumPages; i ++)
@@ -226,7 +223,7 @@ void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream, cudaStre
 		{
 			while(page->id == -1); //TODO: when page is consumed, we should make it -1 again.
 
-			cudaMemcpyAsync((void*) ((largeInt) pconfig->hbuffer + page->id * PAGE_SIZE), (void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), PAGE_SIZE, cudaMemcpyDeviceToHost, *serviceStream);
+			//cudaMemcpyAsync((void*) ((largeInt) pconfig->hbuffer + page->id * PAGE_SIZE), (void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), PAGE_SIZE, cudaMemcpyDeviceToHost, *serviceStream);
 			cudaMemsetAsync((void*) ((largeInt) pconfig->dbuffer + page->id * PAGE_SIZE), 0, PAGE_SIZE, *serviceStream);
         		while(cudaSuccess != cudaStreamQuery(*serviceStream));
 

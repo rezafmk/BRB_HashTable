@@ -42,7 +42,8 @@ typedef struct
 	page_t* hpages;
 
 	void* dbuffer;
-	void* hbuffer;
+	//void* hbuffer;
+	largeInt hashTableOffset;
 	int totalNumPages;
 
 	//This will be a queue, holding pointers to pages that are available

@@ -139,7 +139,9 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 
 		if(oldLock == 0)
 		{
-			hashBucket_t* bucket = group->buckets[offsetWithinGroup];
+			hashBucket_t* bucket = NULL;
+			if(group->buckets[offsetWithinGroup] != NULL)
+				bucket = (hashBucket_t*) ((largeInt) group->buckets[offsetWithinGroup] - pconfig->hashTableOffset + (largeInt) pconfig->dbuffer);
 			//First see if the key already exists in one of the entries of this bucket
 			//The returned bucket is the 'entry' in which the key exists
 			if(group->isNextDead[offsetWithinGroup] != 1 && (existingBucket = containsKey(bucket, key, keySize)) != NULL)
@@ -155,11 +157,13 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 					//TODO reduce the base offset if not null
 					//newBucket->next = (bucket == NULL)? NULL : (hashBucket_t*) ((largeInt) bucket - (largeInt) pconfig->dbuffer);
 					//group->failed = 1;
-					newBucket->next = bucket;
+					newBucket->next = NULL;
+					if(bucket != NULL)
+						newBucket->next = (hashBucket_t*) ((largeInt) bucket - (largeInt) pconfig->dbuffer + pconfig->hashTableOffset);
 					if(group->isNextDead[offsetWithinGroup] == 1)
 						newBucket->isNextDead = 1;
 						
-					group->buckets[offsetWithinGroup] = newBucket;
+					group->buckets[offsetWithinGroup] = (hashBucket_t*) ((largeInt) newBucket - (largeInt) pconfig->dbuffer + pconfig->hashTableOffset);
 					group->isNextDead[offsetWithinGroup] = 0;
 
 					//TODO: this assumes that input key is aligned by ALIGNMENT, which is not a safe assumption

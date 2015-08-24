@@ -639,9 +639,14 @@ int main(int argc, char** argv)
 	largeInt availableGPUMemory = (1 << 28);
 	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
 	memset(pconfig, 0, sizeof(pagingConfig_t));
+
+	largeInt hhashTableBufferSize = 6 * availableGPUMemory;
+	void* hhashTable = malloc(hhashTableBufferSize);
+	memset(hhashTable, 0, hhashTableBufferSize);
 	
 	printf("@INFO: calling initPaging\n");
 	initPaging(availableGPUMemory, pconfig);
+	pconfig->hashTableOffset = (largeInt) hhashTable;
 
 	hashtableConfig_t* hconfig = (hashtableConfig_t*) malloc(sizeof(hashtableConfig_t));
 	printf("@INFO: calling hashtableInit\n");
@@ -684,7 +689,7 @@ int main(int argc, char** argv)
 	errR = cudaGetLastError();
 	printf("#######Error before calling the kernel is: %s\n", cudaGetErrorString(errR));
 
-		gettimeofday(&partial_start, NULL);
+	gettimeofday(&partial_start, NULL);
 	do
 	{
 
@@ -788,8 +793,14 @@ int main(int argc, char** argv)
 		int neededCount = 0;
 		pconfig->poolSize = 0;
 
-		cudaMemcpy(pconfig->hbuffer, pconfig->dbuffer, pconfig->totalNumPages * PAGE_SIZE, cudaMemcpyDeviceToHost);
+		cudaMemcpy((void*) pconfig->hashTableOffset, pconfig->dbuffer, pconfig->totalNumPages * PAGE_SIZE, cudaMemcpyDeviceToHost);
 		cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
+		pconfig->hashTableOffset += pconfig->totalNumPages * PAGE_SIZE;
+		if((pconfig->hashTableOffset + pconfig->totalNumPages * PAGE_SIZE) > ((largeInt) hhashTable + hhashTableBufferSize))
+		{
+			printf("Hash table is getting larger than expected. Needs attention!");
+			exit(1);
+		}
 		for(int i = 0; i < pconfig->totalNumPages; i ++)
 		{
 			pconfig->hpages[i].used = 0;
