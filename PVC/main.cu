@@ -5,7 +5,7 @@
 #define TEXTITEMSIZE 1
 #define DATAITEMSIZE 1
 #define RECORD_SIZE 64
-#define NUM_BUCKETS 1000000
+#define NUM_BUCKETS 1100000
 
 #define EPOCHCHUNK 16
 
@@ -492,18 +492,6 @@ void* pipelineData(void* argument)
 	return NULL;
 }
 
-void* recyclePages(void* arg)
-{
-	printf("recycler thread created.\n");
-	pagingConfig_t* pconfig = ((dataPackage_t*) arg)->pconfig;
-	cudaStream_t* serviceStream = ((dataPackage_t*) arg)->serviceStream;
-	cudaStream_t* execStream = ((dataPackage_t*) arg)->execStream;
-
-	pageRecycler(pconfig, serviceStream, execStream);
-	return NULL;
-}
-
-
 int main(int argc, char** argv)
 {
 	cudaError_t errR;
@@ -752,18 +740,7 @@ int main(int argc, char** argv)
 			pthread_create(&threads[m], NULL, pipelineData, (void*) argument[m]);
 		}
 
-#if 0
-		pthread_t thread;
-		dataPackage_t datapkgArgument;
 
-		datapkgArgument.pconfig = pconfig;
-		datapkgArgument.serviceStream = &serviceStream;
-		datapkgArgument.execStream = &execStream;
-
-		pthread_create(&thread, NULL, recyclePages, &datapkgArgument);
-#endif
-
-		//while(cudaErrorNotReady == cudaStreamQuery(execStream))
 		while(cudaSuccess != cudaStreamQuery(execStream))
 			usleep(300);	
 
@@ -804,7 +781,6 @@ int main(int argc, char** argv)
 		for(int i = 0; i < pconfig->totalNumPages; i ++)
 		{
 			pconfig->hpages[i].used = 0;
-			pconfig->hpoolOfPages[pconfig->poolSize] = i;
 			pconfig->poolSize ++;
 			pconfig->hpages[i].needed = 0;
 			pconfig->hpages[i].next = NULL;
@@ -812,7 +788,6 @@ int main(int argc, char** argv)
 		cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
 		pconfig->initialPageAssignedCounter = 0;
 
-		cudaMemcpy(pconfig->poolOfPages, pconfig->hpoolOfPages, pconfig->poolSize * sizeof(int), cudaMemcpyHostToDevice);
 		cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
 
 		printf("%d pages were memset to be reused\n", pconfig->poolSize);
@@ -863,6 +838,8 @@ int main(int argc, char** argv)
 	int numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
 	bucketGroup_t* groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
 	cudaMemcpy(groups, hconfig->groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
+
+#ifdef DISPLAY_RESULTS
 	int j = 0;
 	char URL[64];
 	int tabCount = 0;
@@ -896,6 +873,7 @@ int main(int argc, char** argv)
 		
 	
 	}
+#endif
 
 	int totalDepth = 0;
 	int totalValidBuckets = 0;
@@ -921,7 +899,7 @@ int main(int argc, char** argv)
 
 	float emptyPercentage = ((float) totalEmpty / (float) NUM_BUCKETS) * (float) 100;
 	float averageDepth = (float) totalDepth / (float) totalValidBuckets;
-	printf("Empty percentage: %0.1f\%\n", emptyPercentage);
+	printf("Empty percentage: %0.1f%\n", emptyPercentage);
 	printf("Average depth: %0.1f\n", averageDepth);
 
 	return 0;
