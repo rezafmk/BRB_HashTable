@@ -33,7 +33,7 @@ __device__ void resolveSameKeyAddition(void const* key, void* value, void* oldVa
 	*((int*) oldValue) += 1;
 }
 
-__device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize)
+__device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize, pagingConfig_t* pconfig)
 {
 	while(bucket != NULL)
 	{
@@ -51,8 +51,8 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 		if(success)
 			break;
 
-		if(bucket->isNextDead == 0)
-			bucket = bucket->next;
+		if(bucket->isNextDead == 0 && bucket->next != NULL)
+			bucket = (hashBucket_t*) ((largeInt) bucket->next - pconfig->hashTableOffset + (largeInt) pconfig->dbuffer);
 		else
 			bucket = NULL;
 	}
@@ -144,7 +144,7 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 				bucket = (hashBucket_t*) ((largeInt) group->buckets[offsetWithinGroup] - pconfig->hashTableOffset + (largeInt) pconfig->dbuffer);
 			//First see if the key already exists in one of the entries of this bucket
 			//The returned bucket is the 'entry' in which the key exists
-			if(group->isNextDead[offsetWithinGroup] != 1 && (existingBucket = containsKey(bucket, key, keySize)) != NULL)
+			if(group->isNextDead[offsetWithinGroup] != 1 && (existingBucket = containsKey(bucket, key, keySize, pconfig)) != NULL)
 			{
 				void* oldValue = (void*) ((largeInt) existingBucket + sizeof(hashBucket_t) + keySizeAligned);
 				resolveSameKeyAddition(key, value, oldValue);
@@ -162,6 +162,8 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 						newBucket->next = (hashBucket_t*) ((largeInt) bucket - (largeInt) pconfig->dbuffer + pconfig->hashTableOffset);
 					if(group->isNextDead[offsetWithinGroup] == 1)
 						newBucket->isNextDead = 1;
+					newBucket->keySize = (short) keySize;
+					newBucket->valueSize = (short) valueSize;
 						
 					group->buckets[offsetWithinGroup] = (hashBucket_t*) ((largeInt) newBucket - (largeInt) pconfig->dbuffer + pconfig->hashTableOffset);
 					group->isNextDead[offsetWithinGroup] = 0;

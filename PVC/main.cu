@@ -640,7 +640,7 @@ int main(int argc, char** argv)
 	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
 	memset(pconfig, 0, sizeof(pagingConfig_t));
 
-	largeInt hhashTableBufferSize = 6 * availableGPUMemory;
+	largeInt hhashTableBufferSize = 7 * availableGPUMemory;
 	void* hhashTable = malloc(hhashTableBufferSize);
 	memset(hhashTable, 0, hhashTableBufferSize);
 	
@@ -798,7 +798,7 @@ int main(int argc, char** argv)
 		pconfig->hashTableOffset += pconfig->totalNumPages * PAGE_SIZE;
 		if((pconfig->hashTableOffset + pconfig->totalNumPages * PAGE_SIZE) > ((largeInt) hhashTable + hhashTableBufferSize))
 		{
-			printf("Hash table is getting larger than expected. Needs attention!");
+			printf("Hash table is getting larger than expected. Needs attention!\n");
 			exit(1);
 		}
 		for(int i = 0; i < pconfig->totalNumPages; i ++)
@@ -858,6 +858,71 @@ int main(int argc, char** argv)
 
 	printf("\n%10s:\t\t%0.1fms\n", "Multipass wordcount", (double)((double)diff/1000.0));
 
+	
+
+	int numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
+	bucketGroup_t* groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
+	cudaMemcpy(groups, hconfig->groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
+	int j = 0;
+	char URL[64];
+	int tabCount = 0;
+	for(int i = 0; i < 200; i ++)
+	{
+		hashBucket_t* bucket = groups[i].buckets[j];
+		if(bucket == NULL)
+		{
+			j ++;
+			continue;
+		}
+
+		while(bucket != NULL)
+		{
+			int keySizeAligned = (bucket->keySize % ALIGNMET == 0)? bucket->keySize : bucket->keySize + (ALIGNMET - (bucket->keySize % ALIGNMET));
+			char* url = (char*) ((largeInt) bucket + sizeof(hashBucket_t));
+
+			for(int k = 0; k < tabCount; k ++)
+				printf("\t");
+			printf("URL: ");
+			for(int m = 0; m < bucket->keySize; m ++)
+				printf("%c", url[m]);
+
+			int* value = (int*) ((largeInt) bucket + sizeof(hashBucket_t) + keySizeAligned);
+			printf(": %d\n", *value);
+			bucket = bucket->next;
+
+			tabCount ++;
+		}
+		tabCount = 0;
+		
+	
+	}
+
+	int totalDepth = 0;
+	int totalValidBuckets = 0;
+	int totalEmpty = 0;
+	for(int i = 0; i < numGroups; i ++)
+	{
+		for(int j = 0; j < GROUP_SIZE; j ++)
+		{
+			hashBucket_t* bucket = groups[i].buckets[j];
+			if(bucket == NULL)
+				totalEmpty ++;
+			else
+				totalValidBuckets ++;
+
+			while(bucket != NULL)
+			{
+				totalDepth ++;
+				bucket = bucket->next;
+			}
+		}
+	
+	}
+
+	float emptyPercentage = ((float) totalEmpty / (float) NUM_BUCKETS) * (float) 100;
+	float averageDepth = (float) totalDepth / (float) totalValidBuckets;
+	printf("Empty percentage: %0.1f\%\n", emptyPercentage);
+	printf("Average depth: %0.1f\n", averageDepth);
 
 	return 0;
 }
