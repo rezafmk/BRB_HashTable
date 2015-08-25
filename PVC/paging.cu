@@ -24,10 +24,6 @@ void initPaging(largeInt availableGPUMemory, pagingConfig_t* pconfig)
 	cudaMalloc((void**) &(pconfig->pages), pconfig->totalNumPages * sizeof(page_t));
 	cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
 
-	pconfig->poolSize = pconfig->totalNumPages;
-	pconfig->hpoolOfPages = (int*) malloc(pconfig->totalNumPages * sizeof(int));
-	for(int i = 0; i < pconfig->poolSize; i ++)
-		pconfig->hpoolOfPages[i] = i;
 	printf("@INFO: done doing initPaging\n");
 }
 
@@ -103,7 +99,7 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 __device__ page_t* allocateNewPage(pagingConfig_t* pconfig, int groupNo)
 {
 	int pageIdToAllocate = atomicInc((unsigned*) &(pconfig->initialPageAssignedCounter), INT_MAX);
-	if(pageIdToAllocate < pconfig->poolSize)
+	if(pageIdToAllocate < pconfig->totalNumPages)
 	{
 		return &(pconfig->pages[pageIdToAllocate]);
 	}

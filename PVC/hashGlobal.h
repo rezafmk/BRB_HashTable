@@ -11,22 +11,11 @@
 #define GROUP_SIZE (PAGE_SIZE / 64)
 #define ALIGNMET 8
 
-#define QUEUE_SIZE 500
 #define HOST_BUFFER_SIZE (1 << 31)
 
 typedef long long int largeInt;
 
 //================ paging structures ================//
-typedef struct
-{
-	//Alternatively, this can be page_t*
-	int pageIds[QUEUE_SIZE]; 
-	int front;
-	int rear;
-	int dirtyRear;
-	int lock;
-	
-} pageQueue_t;
 
 typedef struct page_t
 {
@@ -45,14 +34,6 @@ typedef struct
 	//void* hbuffer;
 	largeInt hashTableOffset;
 	int totalNumPages;
-
-	//This will be a queue, holding pointers to pages that are available
-	pageQueue_t* queue;
-	pageQueue_t* dqueue;
-
-	int* hpoolOfPages;
-	int* poolOfPages;
-	int poolSize;
 
 	int initialPageAssignedCounter;
 	int initialPageAssignedCap;
@@ -95,15 +76,8 @@ typedef struct
 
 
 void initPaging(largeInt availableGPUMemory, pagingConfig_t* pconfig);
-void initQueue(pagingConfig_t* pconfig);
-void pushCleanPage(page_t* page, pagingConfig_t* pconfig);
-__device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig);
-__device__ page_t* popCleanPage(pagingConfig_t* pconfig);
-page_t* peekDirtyPage(pagingConfig_t* pconfig);
 __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingConfig_t* pconfig, int groupNo);
 __device__ page_t* allocateNewPage(pagingConfig_t* pconfig, int groupNo);
-__device__ void revokePage(page_t* page, pagingConfig_t* pconfig);
-void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream, cudaStream_t* execStream);
 
 
 void hashtableInit(int numBuckets, hashtableConfig_t* hconfig);

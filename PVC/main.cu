@@ -662,7 +662,6 @@ int main(int argc, char** argv)
 
 	
 
-
 	cudaStream_t serviceStream;
 	cudaStreamCreate(&serviceStream);
 	
@@ -767,8 +766,6 @@ int main(int argc, char** argv)
 
 		cudaMemcpy(pconfig->hpages, pconfig->pages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyDeviceToHost);
 
-		int neededCount = 0;
-		pconfig->poolSize = 0;
 
 		cudaMemcpy((void*) pconfig->hashTableOffset, pconfig->dbuffer, pconfig->totalNumPages * PAGE_SIZE, cudaMemcpyDeviceToHost);
 		cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
@@ -781,7 +778,6 @@ int main(int argc, char** argv)
 		for(int i = 0; i < pconfig->totalNumPages; i ++)
 		{
 			pconfig->hpages[i].used = 0;
-			pconfig->poolSize ++;
 			pconfig->hpages[i].needed = 0;
 			pconfig->hpages[i].next = NULL;
 		}
@@ -789,9 +785,6 @@ int main(int argc, char** argv)
 		pconfig->initialPageAssignedCounter = 0;
 
 		cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
-
-		printf("%d pages were memset to be reused\n", pconfig->poolSize);
-		printf("Needed pages: %d [out of %d]\n", neededCount, pconfig->totalNumPages);
 
 		int numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
 		bucketGroup_t* groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
