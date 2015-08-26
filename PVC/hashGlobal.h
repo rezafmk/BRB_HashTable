@@ -39,6 +39,8 @@ typedef struct
 	int initialPageAssignedCap;
 } pagingConfig_t;
 
+
+
 //================ hashing structures ================//
 
 //Key and value will be appended to the instance of hashBucket_t every time `multipassMalloc` is called in `add`
@@ -73,6 +75,25 @@ typedef struct
 	int numBuckets;
 } hashtableConfig_t;
 
+typedef struct
+{
+	int* hostCompleteFlag;
+	int* gpuFlags;
+	bool* dfailedFlag;
+	pagingConfig_t* pconfig;
+	pagingConfig_t* dpconfig;
+	hashtableConfig_t* hconfig;
+	int* myNumbers;
+	int* dmyNumbers;
+	void* hhashTableBaseAddr;
+	largeInt hhashTableBufferSize;
+	int numGroups;
+	int groupSize;
+	int flagSize;
+	int numThreads;
+} multipassBookkeeping_t;
+
+
 
 
 void initPaging(largeInt availableGPUMemory, pagingConfig_t* pconfig);
@@ -88,4 +109,21 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 __device__ bool atomicAttemptIncRefCount(int* refCount);
 __device__ int atomicDecRefCount(int* refCount);
 __device__ bool atomicNegateRefCount(int* refCount);
+
+multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag, 
+						int* gpuFlags, 
+						int flagSize,
+						bool* dfailedFlag, 
+						pagingConfig_t* pconfig, 
+						pagingConfig_t* dpconfig, 
+						hashtableConfig_t* hconfig,
+						void* hhashTableBaseAddr,
+						largeInt hhashTableBufferSize,
+						int* dmyNumbers, 
+						int numGroups, 
+						int groupSize,
+						int numThreads);
+
+__global__ void setGroupsPointersDead(bucketGroup_t* groups, int numGroups);
+bool checkAndResetPass(multipassBookkeeping_t* mbk);
 #endif

@@ -492,6 +492,114 @@ void* pipelineData(void* argument)
 	return NULL;
 }
 
+__global__ void setGroupsPointersDead(bucketGroup_t* groups, int numGroups)
+{
+	int index = TID;
+	if(index < (numGroups * GROUP_SIZE))
+	{
+		int i = index / GROUP_SIZE;
+		int j = index % GROUP_SIZE;
+		groups[i].isNextDead[j] = 1;
+	}
+	
+}
+
+
+
+multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag, 
+						int* gpuFlags, 
+						int flagSize,
+						bool* dfailedFlag, 
+						pagingConfig_t* pconfig, 
+						pagingConfig_t* dpconfig, 
+						hashtableConfig_t* hconfig,
+						void* hhashTableBaseAddr,
+						largeInt hhashTableBufferSize,
+						int* dmyNumbers, 
+						int numGroups, 
+						int groupSize,
+						int numThreads)
+{
+	
+	multipassBookkeeping_t* mbk = (multipassBookkeeping_t*) malloc(sizeof(multipassBookkeeping_t));
+	mbk->hostCompleteFlag = hostCompleteFlag;
+	mbk->gpuFlags = gpuFlags;
+	mbk->dfailedFlag = dfailedFlag;
+	mbk->pconfig = pconfig;
+	mbk->dpconfig = dpconfig;
+	mbk->hconfig = hconfig;
+	mbk->dmyNumbers = dmyNumbers;
+	mbk->myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
+	mbk->flagSize = flagSize;
+	mbk->numGroups = numGroups;
+	mbk->groupSize = groupSize;
+	mbk->numThreads = numThreads;
+	mbk->hhashTableBaseAddr = hhashTableBaseAddr;
+	mbk->hhashTableBufferSize = hhashTableBufferSize;
+	return mbk;
+}
+
+bool checkAndResetPass(multipassBookkeeping_t* mbk)
+{
+	bool failedFlag = false;
+	int* hostCompleteFlag = mbk->hostCompleteFlag;
+	int* gpuFlags = mbk->gpuFlags;
+	bool* dfailedFlag = mbk->dfailedFlag;
+	pagingConfig_t* pconfig = mbk->pconfig;
+	pagingConfig_t* dpconfig = mbk->dpconfig;
+	hashtableConfig_t* hconfig = mbk->hconfig;
+	int* dmyNumbers = mbk->dmyNumbers;
+	int* myNumbers = mbk->myNumbers;
+	int flagSize = mbk->flagSize;
+	void* hhashTableBaseAddr = mbk->hhashTableBaseAddr;
+	largeInt hhashTableBufferSize = mbk->hhashTableBufferSize;
+	int numGroups = mbk->numGroups;
+	int groupSize = mbk->groupSize;
+	int numThreads = mbk->numThreads;
+
+	memset((void*) hostCompleteFlag, 0, flagSize);
+	cudaMemset(gpuFlags, 0, flagSize / 2);
+
+	cudaMemcpy(&failedFlag, dfailedFlag, sizeof(bool), cudaMemcpyDeviceToHost);
+	cudaMemset(dfailedFlag, 0, sizeof(bool));
+
+	cudaMemcpy(pconfig, dpconfig, sizeof(pagingConfig_t), cudaMemcpyDeviceToHost);
+
+	cudaMemcpy((void*) pconfig->hashTableOffset, pconfig->dbuffer, pconfig->totalNumPages * PAGE_SIZE, cudaMemcpyDeviceToHost);
+	cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
+
+	pconfig->hashTableOffset += pconfig->totalNumPages * PAGE_SIZE;
+	if((pconfig->hashTableOffset + pconfig->totalNumPages * PAGE_SIZE) > ((largeInt) hhashTableBaseAddr + hhashTableBufferSize))
+	{
+		printf("Hash table is getting larger than expected. Needs attention!\n");
+		exit(1);
+	}
+	cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
+	pconfig->initialPageAssignedCounter = 0;
+
+	cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
+
+	setGroupsPointersDead<<<(((numGroups * groupSize) + 256) / 255), 256>>>(hconfig->groups, numGroups);
+	cudaThreadSynchronize();
+
+	cudaMemcpy(myNumbers, dmyNumbers, 2 * numThreads * sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemset(dmyNumbers, 0, 2 * numThreads * sizeof(int));
+
+	largeInt totalSuccess = 0;
+	largeInt totalFailed = 0;
+	for(int i = 0; i < numThreads; i ++)
+	{
+		totalSuccess += myNumbers[i * 2];
+		totalFailed += myNumbers[i * 2 + 1];
+	}
+
+	printf("Total success: %lld\n", totalSuccess);
+	printf("Total failure: %lld\n", totalFailed);
+
+	return failedFlag;
+}
+
+
 int main(int argc, char** argv)
 {
 	cudaError_t errR;
@@ -630,12 +738,12 @@ int main(int argc, char** argv)
 	memset(pconfig, 0, sizeof(pagingConfig_t));
 
 	largeInt hhashTableBufferSize = 3 * availableGPUMemory;
-	void* hhashTable = malloc(hhashTableBufferSize);
-	memset(hhashTable, 0, hhashTableBufferSize);
+	void* hhashTableBaseAddr = malloc(hhashTableBufferSize);
+	memset(hhashTableBaseAddr, 0, hhashTableBufferSize);
 	
 	printf("@INFO: calling initPaging\n");
 	initPaging(availableGPUMemory, pconfig);
-	pconfig->hashTableOffset = (largeInt) hhashTable;
+	pconfig->hashTableOffset = (largeInt) hhashTableBaseAddr;
 
 	hashtableConfig_t* hconfig = (hashtableConfig_t*) malloc(sizeof(hashtableConfig_t));
 	printf("@INFO: calling hashtableInit\n");
@@ -668,11 +776,28 @@ int main(int argc, char** argv)
 
 	cudaStream_t serviceStream;
 	cudaStreamCreate(&serviceStream);
+
+	int numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
+	multipassBookkeeping_t* mbk = initMultipassBookkeeping(	(int*) hostCompleteFlag, 
+								gpuFlags, 
+								flagSize,
+								dfailedFlag, 
+								pconfig, 
+								dpconfig, 
+								hconfig,
+								hhashTableBaseAddr,
+								hhashTableBufferSize,
+								dmyNumbers, 
+								numGroups, 
+								GROUP_SIZE, 
+								numThreads);
+
+
 	
 	//==========================================================================//
 
 
-	struct timeval partial_start, partial_end, bookkeeping_start, bookkeeping_end;
+	struct timeval partial_start, partial_end, bookkeeping_start, bookkeeping_end, passtime_start, passtime_end;
 	time_t sec;
 	time_t ms;
 	time_t diff;
@@ -681,9 +806,11 @@ int main(int argc, char** argv)
 	printf("#######Error before calling the kernel is: %s\n", cudaGetErrorString(errR));
 
 	gettimeofday(&partial_start, NULL);
+	int passNo = 1;
 	do
 	{
-		printf("Calling the kernel...\n");
+		printf("====================== starting pass %d ======================\n", passNo);
+		gettimeofday(&passtime_start, NULL);
 
 		wordCountKernelMultipass<<<grid, block2, 0, execStream>>>(
 				phony, 
@@ -748,73 +875,39 @@ int main(int argc, char** argv)
 
 
 		errR = cudaGetLastError();
-		printf("#######Error after calling the kernel is: %s\n", cudaGetErrorString(errR));
+		printf("Error after calling the kernel is: %s\n", cudaGetErrorString(errR));
 
 		cudaThreadSynchronize();
+
+		gettimeofday(&passtime_end, NULL);
+		sec = passtime_end.tv_sec - passtime_start.tv_sec;
+		ms = passtime_end.tv_usec - passtime_start.tv_usec;
+		diff = sec * 1000000 + ms;
+		printf("\n%10s:\t\t%0.1fms\n", "Pass time ", (double)((double)diff/1000.0));
 
 		for(int m = 0; m < MAXBLOCKS; m ++)
 			endGlobalTimer(m, "@@ computation");
 
-		gettimeofday(&bookkeeping_start, NULL);
 
 		//======================= Some reseting ===========================
+		
 
-		memset((void*) hostCompleteFlag, 0, flagSize);
-		cudaMemset(gpuFlags, 0, flagSize / 2);
-
-		cudaMemcpy(&failedFlag, dfailedFlag, sizeof(bool), cudaMemcpyDeviceToHost);
-		cudaMemset(dfailedFlag, 0, sizeof(bool));
-
-
-		cudaMemcpy(pconfig, dpconfig, sizeof(pagingConfig_t), cudaMemcpyDeviceToHost);
-
-		cudaMemcpy((void*) pconfig->hashTableOffset, pconfig->dbuffer, pconfig->totalNumPages * PAGE_SIZE, cudaMemcpyDeviceToHost);
-		cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
-
-
-		pconfig->hashTableOffset += pconfig->totalNumPages * PAGE_SIZE;
-		if((pconfig->hashTableOffset + pconfig->totalNumPages * PAGE_SIZE) > ((largeInt) hhashTable + hhashTableBufferSize))
-		{
-			printf("Hash table is getting larger than expected. Needs attention!\n");
-			exit(1);
-		}
-		cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
-		pconfig->initialPageAssignedCounter = 0;
-
-		cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
-
-		int numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
-
-		bucketGroup_t* groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
-		cudaMemcpy(groups, hconfig->groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
-		for(int i = 0; i < numGroups; i ++)
-		{
-			for(int j = 0; j < GROUP_SIZE; j ++)
-				groups[i].isNextDead[j] = 1;
-		}
-		cudaMemcpy(hconfig->groups, groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyHostToDevice);
-
-
-		int* myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
-		cudaMemcpy(myNumbers, dmyNumbers, 2 * numThreads * sizeof(int), cudaMemcpyDeviceToHost);
-		cudaMemset(dmyNumbers, 0, 2 * numThreads * sizeof(int));
-
-		largeInt totalSuccess = 0;
-		largeInt totalFailed = 0;
-		for(int i = 0; i < numThreads; i ++)
-		{
-			totalSuccess += myNumbers[i * 2];
-			totalFailed += myNumbers[i * 2 + 1];
-		}
-
-		printf("Total success: %lld\n", totalSuccess);
-		printf("Total failure: %lld\n", totalFailed);
-
+		gettimeofday(&bookkeeping_start, NULL);
+		failedFlag = checkAndResetPass(mbk);
+		
+		
 		gettimeofday(&bookkeeping_end, NULL);
 		sec = bookkeeping_end.tv_sec - bookkeeping_start.tv_sec;
 		ms = bookkeeping_end.tv_usec - bookkeeping_start.tv_usec;
 		diff = sec * 1000000 + ms;
-		printf("\n%10s:\t\t%0.1fms\n", "bookkeeping", (double)((double)diff/1000.0));
+		printf("\n%10s:\t\t%0.1fms\n", "Pass bookkeeping", (double)((double)diff/1000.0));
+
+
+		if(failedFlag)
+			printf("============ Pass %d ended, need for another pass ============\n", passNo);
+		else
+			printf("=========== Pass %d ended, no need for another pass ===========\n", passNo);
+		passNo ++;
 
 
 	} while(failedFlag);
@@ -823,12 +916,10 @@ int main(int argc, char** argv)
 	sec = partial_end.tv_sec - partial_start.tv_sec;
 	ms = partial_end.tv_usec - partial_start.tv_usec;
 	diff = sec * 1000000 + ms;
-
-	printf("\n%10s:\t\t%0.1fms\n", "Multipass wordcount", (double)((double)diff/1000.0));
+	printf("\n%10s:\t\t%0.1fms\n", "Total time", (double)((double)diff/1000.0));
 
 	
 
-	int numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
 	bucketGroup_t* groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
 	cudaMemcpy(groups, hconfig->groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
 
@@ -897,7 +988,7 @@ int main(int argc, char** argv)
 
 	float emptyPercentage = ((float) totalEmpty / (float) NUM_BUCKETS) * (float) 100;
 	float averageDepth = (float) totalDepth / (float) totalValidBuckets;
-	printf("Empty percentage: %0.1f%\n", emptyPercentage);
+	printf("Empty percentage: %0.1f\n", emptyPercentage);
 	printf("Average depth: %0.1f\n", averageDepth);
 	printf("Max depth: %d\n", maximumDepth);
 
