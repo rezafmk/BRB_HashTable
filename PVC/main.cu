@@ -752,6 +752,9 @@ int main(int argc, char** argv)
 
 		cudaThreadSynchronize();
 
+		for(int m = 0; m < MAXBLOCKS; m ++)
+			endGlobalTimer(m, "@@ computation");
+
 		gettimeofday(&bookkeeping_start, NULL);
 
 		//======================= Some reseting ===========================
@@ -762,13 +765,8 @@ int main(int argc, char** argv)
 		cudaMemcpy(&failedFlag, dfailedFlag, sizeof(bool), cudaMemcpyDeviceToHost);
 		cudaMemset(dfailedFlag, 0, sizeof(bool));
 
-		for(int m = 0; m < MAXBLOCKS; m ++)
-			endGlobalTimer(m, "@@ computation");
-		
+
 		cudaMemcpy(pconfig, dpconfig, sizeof(pagingConfig_t), cudaMemcpyDeviceToHost);
-		cudaMemcpy(pconfig->hpages, pconfig->pages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyDeviceToHost);
-
-
 
 		cudaMemcpy((void*) pconfig->hashTableOffset, pconfig->dbuffer, pconfig->totalNumPages * PAGE_SIZE, cudaMemcpyDeviceToHost);
 		cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
@@ -780,30 +778,20 @@ int main(int argc, char** argv)
 			printf("Hash table is getting larger than expected. Needs attention!\n");
 			exit(1);
 		}
-		for(int i = 0; i < pconfig->totalNumPages; i ++)
-		{
-			pconfig->hpages[i].used = 0;
-			pconfig->hpages[i].needed = 0;
-			pconfig->hpages[i].next = NULL;
-		}
 		cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
 		pconfig->initialPageAssignedCounter = 0;
 
 		cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
 
 		int numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
+
 		bucketGroup_t* groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
 		cudaMemcpy(groups, hconfig->groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
-
-		int max = 0, min = INT_MAX, total = 0;
-		int neededGroupCount = 0;
 		for(int i = 0; i < numGroups; i ++)
 		{
 			for(int j = 0; j < GROUP_SIZE; j ++)
 				groups[i].isNextDead[j] = 1;
 		}
-		total /= numGroups;
-		printf("Number of requests:\n\tmin: %d\n\tmax: %d\n\taverage: %d\n\ttotal number of needed groups: %d [out of %d]\n", min, max, total, neededGroupCount, numGroups);
 		cudaMemcpy(hconfig->groups, groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyHostToDevice);
 
 
