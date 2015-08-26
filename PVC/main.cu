@@ -5,7 +5,7 @@
 #define TEXTITEMSIZE 1
 #define DATAITEMSIZE 1
 #define RECORD_SIZE 64
-#define NUM_BUCKETS 1100000
+#define NUM_BUCKETS 10000000
 
 #define EPOCHCHUNK 16
 
@@ -624,11 +624,12 @@ int main(int argc, char** argv)
 	cudaMemset(dmyNumbers, 0, 2 * numThreads * sizeof(int));
 
 	//============ initializing the hash table and page table ==================//
-	largeInt availableGPUMemory = (1 << 28);
+	
+	largeInt availableGPUMemory = (1 << 30);
 	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
 	memset(pconfig, 0, sizeof(pagingConfig_t));
 
-	largeInt hhashTableBufferSize = 7 * availableGPUMemory;
+	largeInt hhashTableBufferSize = 3 * availableGPUMemory;
 	void* hhashTable = malloc(hhashTableBufferSize);
 	memset(hhashTable, 0, hhashTableBufferSize);
 	
@@ -661,6 +662,9 @@ int main(int argc, char** argv)
 	bool failedFlag = false;
 
 	
+	size_t total, free;
+	cudaMemGetInfo(&free, &total);
+	printf("total memory: %luMB, free: %luMB\n", total / (1 << 20), free / (1 << 20));
 
 	cudaStream_t serviceStream;
 	cudaStreamCreate(&serviceStream);
@@ -668,7 +672,7 @@ int main(int argc, char** argv)
 	//==========================================================================//
 
 
-	struct timeval partial_start, partial_end;//, exec_start, exec_end;
+	struct timeval partial_start, partial_end, bookkeeping_start, bookkeeping_end;
 	time_t sec;
 	time_t ms;
 	time_t diff;
@@ -679,7 +683,6 @@ int main(int argc, char** argv)
 	gettimeofday(&partial_start, NULL);
 	do
 	{
-
 		printf("Calling the kernel...\n");
 
 		wordCountKernelMultipass<<<grid, block2, 0, execStream>>>(
@@ -749,6 +752,7 @@ int main(int argc, char** argv)
 
 		cudaThreadSynchronize();
 
+		gettimeofday(&bookkeeping_start, NULL);
 
 		//======================= Some reseting ===========================
 
@@ -760,15 +764,16 @@ int main(int argc, char** argv)
 
 		for(int m = 0; m < MAXBLOCKS; m ++)
 			endGlobalTimer(m, "@@ computation");
-
 		
 		cudaMemcpy(pconfig, dpconfig, sizeof(pagingConfig_t), cudaMemcpyDeviceToHost);
-
 		cudaMemcpy(pconfig->hpages, pconfig->pages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyDeviceToHost);
+
 
 
 		cudaMemcpy((void*) pconfig->hashTableOffset, pconfig->dbuffer, pconfig->totalNumPages * PAGE_SIZE, cudaMemcpyDeviceToHost);
 		cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
+
+
 		pconfig->hashTableOffset += pconfig->totalNumPages * PAGE_SIZE;
 		if((pconfig->hashTableOffset + pconfig->totalNumPages * PAGE_SIZE) > ((largeInt) hhashTable + hhashTableBufferSize))
 		{
@@ -816,6 +821,13 @@ int main(int argc, char** argv)
 
 		printf("Total success: %lld\n", totalSuccess);
 		printf("Total failure: %lld\n", totalFailed);
+
+		gettimeofday(&bookkeeping_end, NULL);
+		sec = bookkeeping_end.tv_sec - bookkeeping_start.tv_sec;
+		ms = bookkeeping_end.tv_usec - bookkeeping_start.tv_usec;
+		diff = sec * 1000000 + ms;
+		printf("\n%10s:\t\t%0.1fms\n", "bookkeeping", (double)((double)diff/1000.0));
+
 
 	} while(failedFlag);
 
@@ -871,6 +883,7 @@ int main(int argc, char** argv)
 	int totalDepth = 0;
 	int totalValidBuckets = 0;
 	int totalEmpty = 0;
+	int maximumDepth = 0;
 	for(int i = 0; i < numGroups; i ++)
 	{
 		for(int j = 0; j < GROUP_SIZE; j ++)
@@ -881,11 +894,15 @@ int main(int argc, char** argv)
 			else
 				totalValidBuckets ++;
 
+			int localMaxDepth = 0;
 			while(bucket != NULL)
 			{
 				totalDepth ++;
+				localMaxDepth ++;
 				bucket = bucket->next;
 			}
+			if(localMaxDepth > maximumDepth)
+				maximumDepth = localMaxDepth;
 		}
 	
 	}
@@ -894,6 +911,7 @@ int main(int argc, char** argv)
 	float averageDepth = (float) totalDepth / (float) totalValidBuckets;
 	printf("Empty percentage: %0.1f%\n", emptyPercentage);
 	printf("Average depth: %0.1f\n", averageDepth);
+	printf("Max depth: %d\n", maximumDepth);
 
 	return 0;
 }
