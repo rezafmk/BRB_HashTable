@@ -7,7 +7,7 @@
 #define RECORD_SIZE 64
 #define NUM_BUCKETS 10000000
 
-#define EPOCHCHUNK 16
+#define EPOCHCHUNK 30
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 
@@ -36,7 +36,8 @@ __global__ void wordCountKernelMultipass(
 				pagingConfig_t* pconfig,
 				hashtableConfig_t* hconfig,
 				char* states,
-				bool* failedFlag
+				bool* failedFlag,
+				char* epochSuccessStatus
 				)
 {
 	int index = TID2;
@@ -71,6 +72,14 @@ __global__ void wordCountKernelMultipass(
 
 	for(int j = 0; i < end; j ++)
 	{
+#if 1
+		if((prediction && j < epochNum && epochSuccessStatus[j] == (char) 1) || (!prediction && j > 1 && epochSuccessStatus[j - 2] == (char) 1))
+		{
+			i += iterations;
+			continue;
+		}
+#endif
+
 		if(prediction && j < epochNum)	
 		{
 
@@ -203,6 +212,7 @@ __global__ void wordCountKernelMultipass(
 			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * RECORD_SIZE + (threadIdx.x % 32) * COPYSIZE;
 			int step = 0;
 
+			bool localSuccess = true;
 			int loopCounter = 0;
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
@@ -211,7 +221,6 @@ __global__ void wordCountKernelMultipass(
 				int urlSize = 0;
 				for(int j = 0; j < RECORD_SIZE; j ++)
 				{
-
 					if(states[i] == (char) 0)
 					{
 						char c = (textData + (s * iterations * RECORD_SIZE * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
@@ -238,10 +247,10 @@ __global__ void wordCountKernelMultipass(
 					{
 						myNumbers[index * 2 + 1] ++;
 						*failedFlag = true;
+						epochSuccessStatus[j - 2] = (char) 2;
 					}
 				}
 					
-
 			}
 
 			s = (s + 1) % 3;
@@ -733,11 +742,11 @@ int main(int argc, char** argv)
 
 	//============ initializing the hash table and page table ==================//
 	
-	largeInt availableGPUMemory = (1 << 30);
+	largeInt availableGPUMemory = (1 << 29);
 	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
 	memset(pconfig, 0, sizeof(pagingConfig_t));
 
-	largeInt hhashTableBufferSize = 3 * availableGPUMemory;
+	largeInt hhashTableBufferSize = 4 * availableGPUMemory;
 	void* hhashTableBaseAddr = malloc(hhashTableBufferSize);
 	memset(hhashTableBaseAddr, 0, hhashTableBufferSize);
 	
@@ -766,6 +775,11 @@ int main(int argc, char** argv)
 	bool* dfailedFlag;
 	cudaMalloc((void**) &dfailedFlag, sizeof(bool));
 	cudaMemset(dfailedFlag, 0, sizeof(bool));
+
+	char* depochSuccessStatus;
+	cudaMalloc((void**) &depochSuccessStatus, epochNum * sizeof(char));
+	cudaMemset(depochSuccessStatus, 0, epochNum * sizeof(char));
+	char* epochSuccessStatus = (char*) malloc(epochNum * sizeof(char));
 
 	bool failedFlag = false;
 
@@ -828,7 +842,8 @@ int main(int argc, char** argv)
 				dpconfig,
 				dhconfig,
 				dstates,
-				dfailedFlag
+				dfailedFlag,
+				depochSuccessStatus
 				);
 
 
@@ -887,6 +902,19 @@ int main(int argc, char** argv)
 
 		for(int m = 0; m < MAXBLOCKS; m ++)
 			endGlobalTimer(m, "@@ computation");
+
+		cudaMemcpy(epochSuccessStatus, depochSuccessStatus, epochNum * sizeof(char), cudaMemcpyDeviceToHost);
+		for(int i = 0; i < epochNum; i ++)
+		{
+			if(epochSuccessStatus[i] == (char) 0)
+			{
+				epochSuccessStatus[i] = (char) 1;
+				printf("skipping epoch %d..\n", i);
+			}
+			else if(epochSuccessStatus[i] == (char) 2)
+				epochSuccessStatus[i] = (char) 0;
+		}
+		cudaMemcpy(depochSuccessStatus, epochSuccessStatus, epochNum * sizeof(char), cudaMemcpyHostToDevice);
 
 
 		//======================= Some reseting ===========================
