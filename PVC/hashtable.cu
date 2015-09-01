@@ -33,7 +33,7 @@ __device__ void resolveSameKeyAddition(void const* key, void* value, void* oldVa
 	*((int*) oldValue) += 1;
 }
 
-__device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize)
+__device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize, pagingConfig_t* pconfig)
 {
 	while(bucket != NULL)
 	{
@@ -51,7 +51,10 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 		if(success)
 			break;
 
-		bucket = bucket->next;
+		if(bucket->isNextDead == 0 && bucket->next != NULL)
+			bucket = (hashBucket_t*) ((largeInt) bucket->next - pconfig->hashTableOffset + (largeInt) pconfig->dbuffer);
+		else
+			bucket = NULL;
 	}
 
 	return bucket;
@@ -97,7 +100,7 @@ __device__ int atomicDecRefCount(int* refCount)
 	return oldRefCount;
 }
 
-__device__ void atomicNegateRefCount(int* refCount)
+__device__ bool atomicNegateRefCount(int* refCount)
 {
 	int oldRefCount = *refCount;
 	int assume;
@@ -105,9 +108,11 @@ __device__ void atomicNegateRefCount(int* refCount)
 	{
 		assume = oldRefCount;
 		if(oldRefCount >= 0)
-			oldRefCount = (int) atomicCAS((unsigned*) refCount, (unsigned) oldRefCount, -oldRefCount);
+			oldRefCount = (int) atomicCAS((unsigned*) refCount, (unsigned) oldRefCount, ((oldRefCount * (-1)) - 1));
 
 	} while(oldRefCount != assume);
+
+	return (oldRefCount >= 0);
 	
 }
 
@@ -121,11 +126,6 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 
 	bucketGroup_t* group = &(hconfig->groups[groupNo]);
 	
-	// Incrementing the `refCount`. If refCount was negative (which means group is failed), return
-	if(atomicAttemptIncRefCount(&(group->refCount)) != true)
-		return false;
-
-	hashBucket_t* bucket = group->buckets[offsetWithinGroup];
 	hashBucket_t* existingBucket;
 
 	int keySizeAligned = (keySize % ALIGNMET == 0)? keySize : keySize + (ALIGNMET - (keySize % ALIGNMET));
@@ -139,23 +139,34 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 
 		if(oldLock == 0)
 		{
+			hashBucket_t* bucket = NULL;
+			if(group->buckets[offsetWithinGroup] != NULL)
+				bucket = (hashBucket_t*) ((largeInt) group->buckets[offsetWithinGroup] - pconfig->hashTableOffset + (largeInt) pconfig->dbuffer);
 			//First see if the key already exists in one of the entries of this bucket
 			//The returned bucket is the 'entry' in which the key exists
-			if((existingBucket = containsKey(bucket, key, keySize)) != NULL)
+			if(group->isNextDead[offsetWithinGroup] != 1 && (existingBucket = containsKey(bucket, key, keySize, pconfig)) != NULL)
 			{
 				void* oldValue = (void*) ((largeInt) existingBucket + sizeof(hashBucket_t) + keySizeAligned);
 				resolveSameKeyAddition(key, value, oldValue);
 			}
 			else
 			{
-				hashBucket_t* newBucket = (hashBucket_t*) multipassMalloc(sizeof(hashBucket_t) + keySizeAligned + valueSizeAligned, group, pconfig);
+				hashBucket_t* newBucket = (hashBucket_t*) multipassMalloc(sizeof(hashBucket_t) + keySizeAligned + valueSizeAligned, group, pconfig, groupNo);
 				if(newBucket != NULL)
 				{
 					//TODO reduce the base offset if not null
 					//newBucket->next = (bucket == NULL)? NULL : (hashBucket_t*) ((largeInt) bucket - (largeInt) pconfig->dbuffer);
 					//group->failed = 1;
-					newBucket->next = bucket;
-					group->buckets[offsetWithinGroup] = newBucket;
+					newBucket->next = NULL;
+					if(bucket != NULL)
+						newBucket->next = (hashBucket_t*) ((largeInt) bucket - (largeInt) pconfig->dbuffer + pconfig->hashTableOffset);
+					if(group->isNextDead[offsetWithinGroup] == 1)
+						newBucket->isNextDead = 1;
+					newBucket->keySize = (short) keySize;
+					newBucket->valueSize = (short) valueSize;
+						
+					group->buckets[offsetWithinGroup] = (hashBucket_t*) ((largeInt) newBucket - (largeInt) pconfig->dbuffer + pconfig->hashTableOffset);
+					group->isNextDead[offsetWithinGroup] = 0;
 
 					//TODO: this assumes that input key is aligned by ALIGNMENT, which is not a safe assumption
 					for(int i = 0; i < (keySizeAligned / ALIGNMET); i ++)
@@ -165,7 +176,6 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 				}
 				else
 				{
-					atomicNegateRefCount(&(group->refCount));
 					success = false;
 				}
 			}
@@ -173,14 +183,6 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 			atomicExch((unsigned*) &(group->locks[offsetWithinGroup]), 0);
 		}
 	} while(oldLock == 1);
-
-	int oldRefCount = atomicDecRefCount(&(group->refCount));
-	if(oldRefCount == -1)
-	{
-		long long unsigned pageAddress = (long long unsigned) group->parentPage;
-		page_t* oldPage = (page_t*) atomicCAS((long long unsigned*) &(group->parentPage), pageAddress, NULL);
-		revokePage(oldPage, pconfig);
-	}
 
 	return success;
 }

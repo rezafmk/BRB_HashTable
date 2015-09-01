@@ -7,32 +7,24 @@
 #include <time.h>
 #include <sys/time.h>
 
-#define PAGE_SIZE (1 << 19)
-#define GROUP_SIZE (PAGE_SIZE / 64)
+#define PAGE_SIZE (1 << 18)
+#define GROUP_SIZE (PAGE_SIZE / 3)
 #define ALIGNMET 8
 
-#define QUEUE_SIZE 500
 #define HOST_BUFFER_SIZE (1 << 31)
+
+enum recordType { UNTESTED = 0, SUCCEED = 1, FAILED = 2};
 
 typedef long long int largeInt;
 
 //================ paging structures ================//
-typedef struct
-{
-	//Alternatively, this can be page_t*
-	int pageIds[QUEUE_SIZE]; 
-	int front;
-	int rear;
-	int dirtyRear;
-	int lock;
-	
-} pageQueue_t;
 
 typedef struct page_t
 {
 	struct page_t* next;
 	unsigned used;
-	unsigned id;
+	short id;
+	short needed;
 } page_t;
 
 typedef struct
@@ -41,16 +33,15 @@ typedef struct
 	page_t* hpages;
 
 	void* dbuffer;
-	void* hbuffer;
+	//void* hbuffer;
+	largeInt hashTableOffset;
 	int totalNumPages;
-
-	//This will be a queue, holding pointers to pages that are available
-	pageQueue_t* queue;
-	pageQueue_t* dqueue;
 
 	int initialPageAssignedCounter;
 	int initialPageAssignedCap;
 } pagingConfig_t;
+
+
 
 //================ hashing structures ================//
 
@@ -59,7 +50,8 @@ typedef struct
 typedef struct hashBucket_t
 {
 	struct hashBucket_t* next;
-	unsigned lock;
+	short isNextDead;
+	unsigned short lock;
 	short keySize;
 	short valueSize;
 } hashBucket_t;
@@ -68,10 +60,14 @@ typedef struct
 {
 	hashBucket_t* buckets[GROUP_SIZE];
 	unsigned locks[GROUP_SIZE];
+	short isNextDead[GROUP_SIZE];
 	page_t* parentPage;
 	unsigned pageLock;
 	volatile int failed;
 	int refCount;
+	int inactive;
+	int failedRequests;
+	int needed;
 
 } bucketGroup_t;
 
@@ -81,26 +77,61 @@ typedef struct
 	int numBuckets;
 } hashtableConfig_t;
 
+typedef struct
+{
+	int* hostCompleteFlag;
+	int* gpuFlags;
+	bool* dfailedFlag;
+	pagingConfig_t* pconfig;
+	pagingConfig_t* dpconfig;
+	hashtableConfig_t* hconfig;
+	int* myNumbers;
+	int* dmyNumbers;
+	void* hhashTableBaseAddr;
+	largeInt hhashTableBufferSize;
+	char* epochSuccessStatus;
+	char* depochSuccessStatus;
+	int numGroups;
+	int groupSize;
+	int flagSize;
+	int numThreads;
+	int epochNum;
+} multipassBookkeeping_t;
+
+
 
 
 void initPaging(largeInt availableGPUMemory, pagingConfig_t* pconfig);
-void initQueue(pagingConfig_t* pconfig);
-void pushCleanPage(page_t* page, pagingConfig_t* pconfig);
-__device__ void pushDirtyPage(page_t* page, pagingConfig_t* pconfig);
-__device__ page_t* popCleanPage(pagingConfig_t* pconfig);
-page_t* peekDirtyPage(pagingConfig_t* pconfig);
-__device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingConfig_t* pconfig);
-__device__ page_t* allocateNewPage(pagingConfig_t* pconfig);
-__device__ void revokePage(page_t* page, pagingConfig_t* pconfig);
-void pageRecycler(pagingConfig_t* pconfig, cudaStream_t* serviceStream, cudaStream_t* execStream);
+__device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingConfig_t* pconfig, int groupNo);
+__device__ page_t* allocateNewPage(pagingConfig_t* pconfig, int groupNo);
 
 
 void hashtableInit(int numBuckets, hashtableConfig_t* hconfig);
 __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets);
 __device__ void resolveSameKeyAddition(void const* key, void* value, void* oldValue);
-__device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize);
+__device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize, pagingConfig_t* pconfig);
 __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSize, hashtableConfig_t* hconfig, pagingConfig_t* pconfig);
 __device__ bool atomicAttemptIncRefCount(int* refCount);
 __device__ int atomicDecRefCount(int* refCount);
-__device__ void atomicNegateRefCount(int* refCount);
+__device__ bool atomicNegateRefCount(int* refCount);
+
+multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag, 
+						int* gpuFlags, 
+						int flagSize,
+						bool* dfailedFlag, 
+						pagingConfig_t* pconfig, 
+						pagingConfig_t* dpconfig, 
+						hashtableConfig_t* hconfig,
+						void* hhashTableBaseAddr,
+						largeInt hhashTableBufferSize,
+						int* dmyNumbers, 
+						char* epochSuccessStatus,
+						char* depochSuccessStatus,
+						int numGroups, 
+						int groupSize,
+						int numThreads,
+						int epochNum);
+
+__global__ void setGroupsPointersDead(bucketGroup_t* groups, int numGroups);
+bool checkAndResetPass(multipassBookkeeping_t* mbk);
 #endif

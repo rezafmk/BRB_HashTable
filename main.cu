@@ -2,7 +2,7 @@
 
 
 #define RECORD_LENGTH 64
-#define NUM_BUCKETS 1000000
+#define NUM_BUCKETS 10000000
 
 #define BLOCK_ID (gridDim.y * blockIdx.x + blockIdx.y)
 #define THREAD_ID (threadIdx.x)
