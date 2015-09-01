@@ -14,6 +14,7 @@ typedef long long int largeInt;
 #define ALIGNMET 8
 #define NUMTHREADS 8
 #define RECORD_SIZE 64
+#define GB 1073741824
 
 typedef struct hashEntry_t
 {
@@ -34,7 +35,7 @@ typedef struct
 	char* records;
 	hashBucket_t* hashTable;
 	int* status;
-	int numRecords;
+	unsigned numRecords;
 	int numThreads;
 	int index;
 
@@ -154,9 +155,10 @@ void* kernel(void* arg)//char* records, int numRecords, int* recordSizes, int nu
 	
 	int start = chunkSize * index;
 	int end = start + chunkSize;
+	end --;
 
 	
-	for(int i = start; i < end; i += 1)
+	for(unsigned i = start; i < end; i += 1)
 	{
 		char* record = &records[i * RECORD_LENGTH];
 		int recordSize = 0;
@@ -197,22 +199,42 @@ int main(int argc, char** argv)
 	fstat(fd, &finfo);
 	printf("Allocating %lluMB for the input file.\n", ((long long unsigned int)finfo.st_size) / (1 << 20));
 	fdata = (char *) malloc(finfo.st_size);
-	size_t readed = read (fd, fdata, finfo.st_size);
 	size_t fileSize = (size_t) finfo.st_size;
+
+	largeInt maxReadSize = GB;
+	largeInt readed = 0;
+	largeInt toRead = 0;
+
+	if(fileSize > maxReadSize)
+        {
+                largeInt offset = 0;
+                while(offset < fileSize)
+                {
+                        toRead = (maxReadSize < (fileSize - offset))? maxReadSize : (fileSize - offset);
+                        readed += pread(fd, fdata + offset, toRead, offset);
+                        printf("writing %lliMB\n", toRead / (1 << 20));
+                        //pwrite(fdw, fdata + offset, toRead, offset);
+                        offset += toRead;
+                }
+        }
+        else
+                readed = read (fd, fdata, fileSize);
+
+
 	if(readed != fileSize)
 		printf("Not all of the file is read\n");
 
-	int numRecords = fileSize / RECORD_SIZE;
+
+	unsigned numRecords = (unsigned) ((largeInt) fileSize / (largeInt) RECORD_SIZE);
 
 	int numThreads = NUMTHREADS;
 	numRecords = (numRecords % numThreads == 0)? numRecords : (numRecords + (numThreads - (numRecords % numThreads)));
-	printf("@INFO: Number of records: %d (%d per thread)\n", numRecords, numRecords / numThreads);
+	printf("@INFO: Number of records: %u (%u per thread)\n", numRecords, numRecords / numThreads);
 	
 	
 
-	printf("@INFO: Allocating %dMB for input data\n", (numRecords * RECORD_LENGTH) / (1 << 20));
+	printf("@INFO: Allocating %lldMB for input data\n", (largeInt) (numRecords * RECORD_LENGTH) / (largeInt) (1 << 20));
 	char* records = fdata;
-
 
 	printf("@INFO: done initializing the input data\n");
 	hashBucket_t* hashTable = (hashBucket_t*) malloc(NUM_BUCKETS * sizeof(hashBucket_t));
@@ -233,6 +255,7 @@ int main(int argc, char** argv)
 	//Spawn the pthread functions
 
 	gettimeofday(&partial_start, NULL);
+	
 	
 	pthread_t thread[NUMTHREADS];
 	dataPackage_t argument[NUMTHREADS];

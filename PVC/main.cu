@@ -6,6 +6,7 @@
 #define DATAITEMSIZE 1
 #define RECORD_SIZE 64
 #define NUM_BUCKETS 10000000
+#define GB 1073741824
 
 #define EPOCHCHUNK 30
 
@@ -212,19 +213,18 @@ __global__ void wordCountKernelMultipass(
 			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * RECORD_SIZE + (threadIdx.x % 32) * COPYSIZE;
 			int step = 0;
 
-			bool localSuccess = true;
 			int loopCounter = 0;
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
 				//TODO: since the hash table lib is ours, we can read the data in it coalescly.
 				char URL[64];
 				int urlSize = 0;
-				for(int j = 0; j < RECORD_SIZE; j ++)
+				for(int k = 0; k < RECORD_SIZE; k ++)
 				{
 					if(states[i] == (char) 0)
 					{
 						char c = (textData + (s * iterations * RECORD_SIZE * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
-						URL[j] = c;
+						URL[k] = c;
 						if(c != ' ' && c != '\n')
 							urlSize ++;
 					}
@@ -252,6 +252,7 @@ __global__ void wordCountKernelMultipass(
 				}
 					
 			}
+				
 
 			s = (s + 1) % 3;
 		}
@@ -577,10 +578,11 @@ bool checkAndResetPass(multipassBookkeeping_t* mbk)
 	cudaMemcpy((void*) pconfig->hashTableOffset, pconfig->dbuffer, pconfig->totalNumPages * PAGE_SIZE, cudaMemcpyDeviceToHost);
 	cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
 
+	printf("totalnoPage * pagesize: %llu, hhashtbufferSize: %llu\n", (largeInt) pconfig->totalNumPages * PAGE_SIZE, (largeInt) hhashTableBufferSize);
 	pconfig->hashTableOffset += pconfig->totalNumPages * PAGE_SIZE;
-	if((pconfig->hashTableOffset + pconfig->totalNumPages * PAGE_SIZE) > ((largeInt) hhashTableBaseAddr + hhashTableBufferSize))
+	if((pconfig->hashTableOffset + pconfig->totalNumPages * PAGE_SIZE) > ((largeInt) hhashTableBaseAddr + hhashTableBufferSize) && failedFlag)
 	{
-		printf("Hash table is getting larger than expected. Needs attention!\n");
+		printf("Need more space on CPU memory for the hash table. Aborting...\n");
 		exit(1);
 	}
 	cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
@@ -630,8 +632,28 @@ int main(int argc, char** argv)
 	fstat(fd, &finfo);
 	printf("Allocating %lluMB for the input file.\n", ((long long unsigned int)finfo.st_size) / (1 << 20));
 	fdata = (char *) malloc(finfo.st_size);
-	size_t readed = read (fd, fdata, finfo.st_size);
 	size_t fileSize = (size_t) finfo.st_size;
+
+	largeInt maxReadSize = GB;
+	largeInt readed = 0;
+	largeInt toRead = 0;
+
+	if(fileSize > maxReadSize)
+        {
+                largeInt offset = 0;
+                while(offset < fileSize)
+                {
+                        toRead = (maxReadSize < (fileSize - offset))? maxReadSize : (fileSize - offset);
+                        readed += pread(fd, fdata + offset, toRead, offset);
+                        printf("writing %lliMB\n", toRead / (1 << 20));
+                        //pwrite(fdw, fdata + offset, toRead, offset);
+                        offset += toRead;
+                }
+        }
+        else
+                readed = read (fd, fdata, fileSize);
+
+
 	if(readed != fileSize)
 		printf("Not all of the file is read\n");
 
@@ -742,11 +764,12 @@ int main(int argc, char** argv)
 
 	//============ initializing the hash table and page table ==================//
 	
-	largeInt availableGPUMemory = (1 << 29);
+	largeInt availableGPUMemory = (1 << 30);
 	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
 	memset(pconfig, 0, sizeof(pagingConfig_t));
+	
 
-	largeInt hhashTableBufferSize = 4 * availableGPUMemory;
+	largeInt hhashTableBufferSize = 3 * availableGPUMemory;
 	void* hhashTableBaseAddr = malloc(hhashTableBufferSize);
 	memset(hhashTableBaseAddr, 0, hhashTableBufferSize);
 	
@@ -807,6 +830,8 @@ int main(int argc, char** argv)
 								numThreads);
 
 
+	printf("@INFO: number of page: %d\n", (int)(availableGPUMemory / PAGE_SIZE));
+	printf("@INFO: number of hash groups: %d\n", numGroups);
 	
 	//==========================================================================//
 
@@ -909,7 +934,7 @@ int main(int argc, char** argv)
 			if(epochSuccessStatus[i] == (char) 0)
 			{
 				epochSuccessStatus[i] = (char) 1;
-				printf("skipping epoch %d..\n", i);
+				//printf("skipping epoch %d..\n", i);
 			}
 			else if(epochSuccessStatus[i] == (char) 2)
 				epochSuccessStatus[i] = (char) 0;
@@ -931,10 +956,6 @@ int main(int argc, char** argv)
 		printf("\n%10s:\t\t%0.1fms\n", "Pass bookkeeping", (double)((double)diff/1000.0));
 
 
-		if(failedFlag)
-			printf("============ Pass %d ended, need for another pass ============\n", passNo);
-		else
-			printf("=========== Pass %d ended, no need for another pass ===========\n", passNo);
 		passNo ++;
 
 

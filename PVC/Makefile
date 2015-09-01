@@ -1,4 +1,4 @@
-
+FLAGS=-Xptxas --maxrregcount=32
 default:multipass
 
 multipass:
