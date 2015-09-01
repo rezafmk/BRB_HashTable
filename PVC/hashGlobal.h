@@ -13,6 +13,8 @@
 
 #define HOST_BUFFER_SIZE (1 << 31)
 
+enum recordType { UNTESTED = 0, SUCCEED = 1, FAILED = 2};
+
 typedef long long int largeInt;
 
 //================ paging structures ================//
@@ -87,10 +89,13 @@ typedef struct
 	int* dmyNumbers;
 	void* hhashTableBaseAddr;
 	largeInt hhashTableBufferSize;
+	char* epochSuccessStatus;
+	char* depochSuccessStatus;
 	int numGroups;
 	int groupSize;
 	int flagSize;
 	int numThreads;
+	int epochNum;
 } multipassBookkeeping_t;
 
 
@@ -120,9 +125,12 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 						void* hhashTableBaseAddr,
 						largeInt hhashTableBufferSize,
 						int* dmyNumbers, 
+						char* epochSuccessStatus,
+						char* depochSuccessStatus,
 						int numGroups, 
 						int groupSize,
-						int numThreads);
+						int numThreads,
+						int epochNum);
 
 __global__ void setGroupsPointersDead(bucketGroup_t* groups, int numGroups);
 bool checkAndResetPass(multipassBookkeeping_t* mbk);

@@ -241,13 +241,13 @@ __global__ void wordCountKernelMultipass(
 					if(addToHashtable((void*) URL, urlSize, (void*) &value, sizeof(largeInt), hconfig, pconfig) == true)
 					{
 						myNumbers[index * 2] ++;
-						states[i] = (char) 1;
+						states[i] = SUCCEED;
 					}
 					else
 					{
 						myNumbers[index * 2 + 1] ++;
 						*failedFlag = true;
-						epochSuccessStatus[j - 2] = (char) 2;
+						epochSuccessStatus[j - 2] = FAILED;
 					}
 				}
 					
@@ -526,9 +526,12 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 						void* hhashTableBaseAddr,
 						largeInt hhashTableBufferSize,
 						int* dmyNumbers, 
+						char* epochSuccessStatus,
+						char* depochSuccessStatus,
 						int numGroups, 
 						int groupSize,
-						int numThreads)
+						int numThreads,
+						int epochNum)
 {
 	
 	multipassBookkeeping_t* mbk = (multipassBookkeeping_t*) malloc(sizeof(multipassBookkeeping_t));
@@ -546,6 +549,10 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	mbk->numThreads = numThreads;
 	mbk->hhashTableBaseAddr = hhashTableBaseAddr;
 	mbk->hhashTableBufferSize = hhashTableBufferSize;
+	mbk->epochSuccessStatus = epochSuccessStatus;
+	mbk->depochSuccessStatus = depochSuccessStatus;
+	mbk->epochNum = epochNum;
+
 	return mbk;
 }
 
@@ -566,6 +573,20 @@ bool checkAndResetPass(multipassBookkeeping_t* mbk)
 	int numGroups = mbk->numGroups;
 	int groupSize = mbk->groupSize;
 	int numThreads = mbk->numThreads;
+	char* epochSuccessStatus = mbk->epochSuccessStatus;
+	char* depochSuccessStatus = mbk->depochSuccessStatus;
+	int epochNum = mbk->epochNum;
+
+	cudaMemcpy(epochSuccessStatus, depochSuccessStatus, epochNum * sizeof(char), cudaMemcpyDeviceToHost);
+	for(int i = 0; i < epochNum; i ++)
+	{
+		if(epochSuccessStatus[i] == UNTESTED)
+			epochSuccessStatus[i] = SUCCEED;
+		else if(epochSuccessStatus[i] == FAILED)
+			epochSuccessStatus[i] = UNTESTED;
+	}
+	cudaMemcpy(depochSuccessStatus, epochSuccessStatus, epochNum * sizeof(char), cudaMemcpyHostToDevice);
+
 
 	memset((void*) hostCompleteFlag, 0, flagSize);
 	cudaMemset(gpuFlags, 0, flagSize / 2);
@@ -825,9 +846,12 @@ int main(int argc, char** argv)
 								hhashTableBaseAddr,
 								hhashTableBufferSize,
 								dmyNumbers, 
+								epochSuccessStatus,
+								depochSuccessStatus,
 								numGroups, 
 								GROUP_SIZE, 
-								numThreads);
+								numThreads,
+								epochNum);
 
 
 	printf("@INFO: number of page: %d\n", (int)(availableGPUMemory / PAGE_SIZE));
@@ -928,18 +952,6 @@ int main(int argc, char** argv)
 		for(int m = 0; m < MAXBLOCKS; m ++)
 			endGlobalTimer(m, "@@ computation");
 
-		cudaMemcpy(epochSuccessStatus, depochSuccessStatus, epochNum * sizeof(char), cudaMemcpyDeviceToHost);
-		for(int i = 0; i < epochNum; i ++)
-		{
-			if(epochSuccessStatus[i] == (char) 0)
-			{
-				epochSuccessStatus[i] = (char) 1;
-				//printf("skipping epoch %d..\n", i);
-			}
-			else if(epochSuccessStatus[i] == (char) 2)
-				epochSuccessStatus[i] = (char) 0;
-		}
-		cudaMemcpy(depochSuccessStatus, epochSuccessStatus, epochNum * sizeof(char), cudaMemcpyHostToDevice);
 
 
 		//======================= Some reseting ===========================
