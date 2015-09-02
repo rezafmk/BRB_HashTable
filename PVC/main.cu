@@ -656,33 +656,13 @@ int main(int argc, char** argv)
 
 	//============ initializing the hash table and page table ==================//
 	
-	largeInt availableGPUMemory = (1 << 30);
-	pagingConfig_t* pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
-	memset(pconfig, 0, sizeof(pagingConfig_t));
-	
-
+	size_t availableGPUMemory = (1 << 30);
 	largeInt hhashTableBufferSize = 3 * availableGPUMemory;
 	void* hhashTableBaseAddr = malloc(hhashTableBufferSize);
 	memset(hhashTableBaseAddr, 0, hhashTableBufferSize);
 	
-	printf("@INFO: calling initPaging\n");
-	initPaging(availableGPUMemory, pconfig);
-	pconfig->hashTableOffset = (largeInt) hhashTableBaseAddr;
-
-	hashtableConfig_t* hconfig = (hashtableConfig_t*) malloc(sizeof(hashtableConfig_t));
-	printf("@INFO: calling hashtableInit\n");
-	hashtableInit(NUM_BUCKETS, hconfig);
 	
 	
-	printf("@INFO: transferring config structs to GPU memory\n");
-	pagingConfig_t* dpconfig;
-	cudaMalloc((void**) &dpconfig, sizeof(pagingConfig_t));
-	cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
-
-	hashtableConfig_t* dhconfig;
-	cudaMalloc((void**) &dhconfig, sizeof(hashtableConfig_t));
-	cudaMemcpy(dhconfig, hconfig, sizeof(hashtableConfig_t), cudaMemcpyHostToDevice);
-
 	char* dstates;
 	cudaMalloc((void**) &dstates, numRecords * sizeof(char));
 	cudaMemset(dstates, 0, numRecords * sizeof(char));
@@ -711,9 +691,6 @@ int main(int argc, char** argv)
 								gpuFlags, 
 								flagSize,
 								dfailedFlag, 
-								pconfig, 
-								dpconfig, 
-								hconfig,
 								hhashTableBaseAddr,
 								hhashTableBufferSize,
 								dmyNumbers, 
@@ -759,8 +736,8 @@ int main(int argc, char** argv)
 				epochNum,
 				dmyNumbers,
 				numThreads,
-				dpconfig,
-				dhconfig,
+				mbk->dpconfig,
+				mbk->dhconfig,
 				dstates,
 				dfailedFlag,
 				depochSuccessStatus
@@ -853,7 +830,7 @@ int main(int argc, char** argv)
 	
 
 	bucketGroup_t* groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
-	cudaMemcpy(groups, hconfig->groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
+	cudaMemcpy(groups, mbk->hconfig->groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
 
 #ifdef DISPLAY_RESULTS
 	int j = 0;

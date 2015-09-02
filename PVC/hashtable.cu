@@ -1,4 +1,5 @@
 #include "hashGlobal.h"
+#define NUM_BUCKETS 10000000
 
 void hashtableInit(int numBuckets, hashtableConfig_t* hconfig)
 {
@@ -205,9 +206,6 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 						int* gpuFlags, 
 						int flagSize,
 						bool* dfailedFlag, 
-						pagingConfig_t* pconfig, 
-						pagingConfig_t* dpconfig, 
-						hashtableConfig_t* hconfig,
 						void* hhashTableBaseAddr,
 						largeInt hhashTableBufferSize,
 						int* dmyNumbers, 
@@ -223,9 +221,6 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	mbk->hostCompleteFlag = hostCompleteFlag;
 	mbk->gpuFlags = gpuFlags;
 	mbk->dfailedFlag = dfailedFlag;
-	mbk->pconfig = pconfig;
-	mbk->dpconfig = dpconfig;
-	mbk->hconfig = hconfig;
 	mbk->dmyNumbers = dmyNumbers;
 	mbk->myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
 	mbk->flagSize = flagSize;
@@ -237,6 +232,26 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	mbk->epochSuccessStatus = epochSuccessStatus;
 	mbk->depochSuccessStatus = depochSuccessStatus;
 	mbk->epochNum = epochNum;
+
+
+	size_t availableGPUMemory = (1 << 30);
+	mbk->pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
+	memset(mbk->pconfig, 0, sizeof(pagingConfig_t));
+	// Calling initPaging
+	initPaging(availableGPUMemory, mbk->pconfig);
+	mbk->pconfig->hashTableOffset = (largeInt) hhashTableBaseAddr;
+
+	mbk->hconfig = (hashtableConfig_t*) malloc(sizeof(hashtableConfig_t));
+	hashtableInit(NUM_BUCKETS, mbk->hconfig);
+	
+	
+	printf("@INFO: transferring config structs to GPU memory\n");
+	cudaMalloc((void**) &(mbk->dpconfig), sizeof(pagingConfig_t));
+	cudaMemcpy(mbk->dpconfig, mbk->pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
+
+	cudaMalloc((void**) &(mbk->dhconfig), sizeof(hashtableConfig_t));
+	cudaMemcpy(mbk->dhconfig, mbk->hconfig, sizeof(hashtableConfig_t), cudaMemcpyHostToDevice);
+
 
 	return mbk;
 }

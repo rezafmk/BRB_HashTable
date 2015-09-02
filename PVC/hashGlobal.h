@@ -89,6 +89,7 @@ typedef struct
 	pagingConfig_t* pconfig;
 	pagingConfig_t* dpconfig;
 	hashtableConfig_t* hconfig;
+	hashtableConfig_t* dhconfig;
 	int* myNumbers;
 	int* dmyNumbers;
 	void* hhashTableBaseAddr;
@@ -123,9 +124,6 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 						int* gpuFlags, 
 						int flagSize,
 						bool* dfailedFlag, 
-						pagingConfig_t* pconfig, 
-						pagingConfig_t* dpconfig, 
-						hashtableConfig_t* hconfig,
 						void* hhashTableBaseAddr,
 						largeInt hhashTableBufferSize,
 						int* dmyNumbers, 
