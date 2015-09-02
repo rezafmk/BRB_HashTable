@@ -126,7 +126,6 @@ __device__ bool atomicNegateRefCount(int* refCount);
 multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag, 
 						int* gpuFlags, 
 						int flagSize,
-						int* dmyNumbers, 
 						int groupSize,
 						int numThreads,
 						int epochNum,

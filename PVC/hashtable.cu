@@ -205,7 +205,6 @@ __global__ void setGroupsPointersDead(bucketGroup_t* groups, int numGroups)
 multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag, 
 						int* gpuFlags, 
 						int flagSize,
-						int* dmyNumbers, 
 						int groupSize,
 						int numThreads,
 						int epochNum,
@@ -215,14 +214,16 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	multipassBookkeeping_t* mbk = (multipassBookkeeping_t*) malloc(sizeof(multipassBookkeeping_t));
 	mbk->hostCompleteFlag = hostCompleteFlag;
 	mbk->gpuFlags = gpuFlags;
-	mbk->dmyNumbers = dmyNumbers;
-	mbk->myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
 	mbk->flagSize = flagSize;
 	mbk->groupSize = groupSize;
 	mbk->numThreads = numThreads;
 	mbk->epochNum = epochNum;
 	mbk->numRecords = numRecords;
 	mbk->numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
+
+	mbk->myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
+	cudaMalloc((void**) &(mbk->dmyNumbers), 2 * numThreads * sizeof(int));
+	cudaMemset((mbk->dmyNumbers), 0, 2 * numThreads * sizeof(int));
 
 	mbk->availableGPUMemory = (1 << 30);
 	mbk->hhashTableBufferSize = 3 * mbk->availableGPUMemory;

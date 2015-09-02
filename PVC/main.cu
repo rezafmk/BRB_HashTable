@@ -650,27 +650,16 @@ int main(int argc, char** argv)
 	cudaStream_t copyStream;
 	cudaStreamCreate(&copyStream);
 	
-	int* dmyNumbers;
-	cudaMalloc((void**) &dmyNumbers, 2 * numThreads * sizeof(int));
-	cudaMemset(dmyNumbers, 0, 2 * numThreads * sizeof(int));
-
 	//============ initializing the hash table and page table ==================//
-
-	
-
 	multipassBookkeeping_t* mbk = initMultipassBookkeeping(	(int*) hostCompleteFlag, 
 								gpuFlags, 
 								flagSize,
-								dmyNumbers, 
 								GROUP_SIZE, 
 								numThreads,
 								epochNum,
 								numRecords);
 
-
-	
 	//==========================================================================//
-
 
 	struct timeval partial_start, partial_end, bookkeeping_start, bookkeeping_end, passtime_start, passtime_end;
 	time_t sec;
@@ -699,7 +688,7 @@ int main(int argc, char** argv)
 				firstLastAddrsSpace1,
 				iterations,
 				epochNum,
-				dmyNumbers,
+				mbk->dmyNumbers,
 				numThreads,
 				mbk->dpconfig,
 				mbk->dhconfig,
@@ -793,7 +782,6 @@ int main(int argc, char** argv)
 	printf("\n%10s:\t\t%0.1fms\n", "Total time", (double)((double)diff/1000.0));
 
 	
-
 	bucketGroup_t* groups = (bucketGroup_t*) malloc(mbk->numGroups * sizeof(bucketGroup_t));
 	cudaMemcpy(groups, mbk->hconfig->groups, mbk->numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
 
