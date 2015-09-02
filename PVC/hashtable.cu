@@ -187,4 +187,133 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 	return success;
 }
 
+__global__ void setGroupsPointersDead(bucketGroup_t* groups, int numGroups)
+{
+	int index = TID;
+	if(index < (numGroups * GROUP_SIZE))
+	{
+		int i = index / GROUP_SIZE;
+		int j = index % GROUP_SIZE;
+		groups[i].isNextDead[j] = 1;
+	}
+	
+}
+
+
+
+multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag, 
+						int* gpuFlags, 
+						int flagSize,
+						bool* dfailedFlag, 
+						pagingConfig_t* pconfig, 
+						pagingConfig_t* dpconfig, 
+						hashtableConfig_t* hconfig,
+						void* hhashTableBaseAddr,
+						largeInt hhashTableBufferSize,
+						int* dmyNumbers, 
+						char* epochSuccessStatus,
+						char* depochSuccessStatus,
+						int numGroups, 
+						int groupSize,
+						int numThreads,
+						int epochNum)
+{
+	
+	multipassBookkeeping_t* mbk = (multipassBookkeeping_t*) malloc(sizeof(multipassBookkeeping_t));
+	mbk->hostCompleteFlag = hostCompleteFlag;
+	mbk->gpuFlags = gpuFlags;
+	mbk->dfailedFlag = dfailedFlag;
+	mbk->pconfig = pconfig;
+	mbk->dpconfig = dpconfig;
+	mbk->hconfig = hconfig;
+	mbk->dmyNumbers = dmyNumbers;
+	mbk->myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
+	mbk->flagSize = flagSize;
+	mbk->numGroups = numGroups;
+	mbk->groupSize = groupSize;
+	mbk->numThreads = numThreads;
+	mbk->hhashTableBaseAddr = hhashTableBaseAddr;
+	mbk->hhashTableBufferSize = hhashTableBufferSize;
+	mbk->epochSuccessStatus = epochSuccessStatus;
+	mbk->depochSuccessStatus = depochSuccessStatus;
+	mbk->epochNum = epochNum;
+
+	return mbk;
+}
+
+bool checkAndResetPass(multipassBookkeeping_t* mbk)
+{
+	bool failedFlag = false;
+	int* hostCompleteFlag = mbk->hostCompleteFlag;
+	int* gpuFlags = mbk->gpuFlags;
+	bool* dfailedFlag = mbk->dfailedFlag;
+	pagingConfig_t* pconfig = mbk->pconfig;
+	pagingConfig_t* dpconfig = mbk->dpconfig;
+	hashtableConfig_t* hconfig = mbk->hconfig;
+	int* dmyNumbers = mbk->dmyNumbers;
+	int* myNumbers = mbk->myNumbers;
+	int flagSize = mbk->flagSize;
+	void* hhashTableBaseAddr = mbk->hhashTableBaseAddr;
+	largeInt hhashTableBufferSize = mbk->hhashTableBufferSize;
+	int numGroups = mbk->numGroups;
+	int groupSize = mbk->groupSize;
+	int numThreads = mbk->numThreads;
+	char* epochSuccessStatus = mbk->epochSuccessStatus;
+	char* depochSuccessStatus = mbk->depochSuccessStatus;
+	int epochNum = mbk->epochNum;
+
+	cudaMemcpy(epochSuccessStatus, depochSuccessStatus, epochNum * sizeof(char), cudaMemcpyDeviceToHost);
+	for(int i = 0; i < epochNum; i ++)
+	{
+		if(epochSuccessStatus[i] == UNTESTED)
+			epochSuccessStatus[i] = SUCCEED;
+		else if(epochSuccessStatus[i] == FAILED)
+			epochSuccessStatus[i] = UNTESTED;
+	}
+	cudaMemcpy(depochSuccessStatus, epochSuccessStatus, epochNum * sizeof(char), cudaMemcpyHostToDevice);
+
+
+	memset((void*) hostCompleteFlag, 0, flagSize);
+	cudaMemset(gpuFlags, 0, flagSize / 2);
+
+	cudaMemcpy(&failedFlag, dfailedFlag, sizeof(bool), cudaMemcpyDeviceToHost);
+	cudaMemset(dfailedFlag, 0, sizeof(bool));
+
+	cudaMemcpy(pconfig, dpconfig, sizeof(pagingConfig_t), cudaMemcpyDeviceToHost);
+
+	cudaMemcpy((void*) pconfig->hashTableOffset, pconfig->dbuffer, pconfig->totalNumPages * PAGE_SIZE, cudaMemcpyDeviceToHost);
+	cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
+
+	printf("totalnoPage * pagesize: %llu, hhashtbufferSize: %llu\n", (largeInt) pconfig->totalNumPages * PAGE_SIZE, (largeInt) hhashTableBufferSize);
+	pconfig->hashTableOffset += pconfig->totalNumPages * PAGE_SIZE;
+	if((pconfig->hashTableOffset + pconfig->totalNumPages * PAGE_SIZE) > ((largeInt) hhashTableBaseAddr + hhashTableBufferSize) && failedFlag)
+	{
+		printf("Need more space on CPU memory for the hash table. Aborting...\n");
+		exit(1);
+	}
+	cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
+	pconfig->initialPageAssignedCounter = 0;
+
+	cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
+
+	setGroupsPointersDead<<<(((numGroups * groupSize) + 256) / 255), 256>>>(hconfig->groups, numGroups);
+	cudaThreadSynchronize();
+
+	cudaMemcpy(myNumbers, dmyNumbers, 2 * numThreads * sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemset(dmyNumbers, 0, 2 * numThreads * sizeof(int));
+
+	largeInt totalSuccess = 0;
+	largeInt totalFailed = 0;
+	for(int i = 0; i < numThreads; i ++)
+	{
+		totalSuccess += myNumbers[i * 2];
+		totalFailed += myNumbers[i * 2 + 1];
+	}
+
+	printf("Total success: %lld\n", totalSuccess);
+	printf("Total failure: %lld\n", totalFailed);
+
+	return failedFlag;
+}
+
 

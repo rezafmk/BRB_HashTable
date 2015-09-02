@@ -13,6 +13,10 @@
 
 #define HOST_BUFFER_SIZE (1 << 31)
 
+#define BLOCK_ID (gridDim.y * blockIdx.x + blockIdx.y)
+#define THREAD_ID (threadIdx.x)
+#define TID (BLOCK_ID * blockDim.x + THREAD_ID)
+
 enum recordType { UNTESTED = 0, SUCCEED = 1, FAILED = 2};
 
 typedef long long int largeInt;
