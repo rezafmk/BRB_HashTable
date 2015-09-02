@@ -94,6 +94,7 @@ typedef struct
 	int* dmyNumbers;
 	void* hhashTableBaseAddr;
 	largeInt hhashTableBufferSize;
+	size_t availableGPUMemory;
 	char* epochSuccessStatus;
 	char* depochSuccessStatus;
 	char* dstates;
@@ -125,10 +126,7 @@ __device__ bool atomicNegateRefCount(int* refCount);
 multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag, 
 						int* gpuFlags, 
 						int flagSize,
-						void* hhashTableBaseAddr,
-						largeInt hhashTableBufferSize,
 						int* dmyNumbers, 
-						int numGroups, 
 						int groupSize,
 						int numThreads,
 						int epochNum,

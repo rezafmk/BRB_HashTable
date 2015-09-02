@@ -205,10 +205,7 @@ __global__ void setGroupsPointersDead(bucketGroup_t* groups, int numGroups)
 multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag, 
 						int* gpuFlags, 
 						int flagSize,
-						void* hhashTableBaseAddr,
-						largeInt hhashTableBufferSize,
 						int* dmyNumbers, 
-						int numGroups, 
 						int groupSize,
 						int numThreads,
 						int epochNum,
@@ -221,13 +218,16 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	mbk->dmyNumbers = dmyNumbers;
 	mbk->myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
 	mbk->flagSize = flagSize;
-	mbk->numGroups = numGroups;
 	mbk->groupSize = groupSize;
 	mbk->numThreads = numThreads;
-	mbk->hhashTableBaseAddr = hhashTableBaseAddr;
-	mbk->hhashTableBufferSize = hhashTableBufferSize;
 	mbk->epochNum = epochNum;
 	mbk->numRecords = numRecords;
+	mbk->numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
+
+	mbk->availableGPUMemory = (1 << 30);
+	mbk->hhashTableBufferSize = 3 * mbk->availableGPUMemory;
+	mbk->hhashTableBaseAddr = malloc(mbk->hhashTableBufferSize);
+	memset(mbk->hhashTableBaseAddr, 0, mbk->hhashTableBufferSize);
 
 	cudaMalloc((void**) &(mbk->dfailedFlag), sizeof(bool));
 	cudaMemset(mbk->dfailedFlag, 0, sizeof(bool));
@@ -243,7 +243,7 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	memset(mbk->pconfig, 0, sizeof(pagingConfig_t));
 	// Calling initPaging
 	initPaging(availableGPUMemory, mbk->pconfig);
-	mbk->pconfig->hashTableOffset = (largeInt) hhashTableBaseAddr;
+	mbk->pconfig->hashTableOffset = (largeInt) mbk->hhashTableBaseAddr;
 
 	mbk->hconfig = (hashtableConfig_t*) malloc(sizeof(hashtableConfig_t));
 	hashtableInit(NUM_BUCKETS, mbk->hconfig);
@@ -259,7 +259,13 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	cudaMalloc((void**) &(mbk->dstates), mbk->numRecords * sizeof(char));
 	cudaMemset(mbk->dstates, 0, mbk->numRecords * sizeof(char));
 
+	size_t total, free;
+	cudaMemGetInfo(&free, &total);
+	printf("total memory: %luMB, free: %luMB\n", total / (1 << 20), free / (1 << 20));
 
+
+	printf("@INFO: number of page: %d\n", (int)(mbk->availableGPUMemory / PAGE_SIZE));
+	printf("@INFO: number of hash groups: %d\n", mbk->numGroups);
 
 	return mbk;
 }

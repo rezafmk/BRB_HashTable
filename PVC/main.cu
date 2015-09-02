@@ -655,40 +655,19 @@ int main(int argc, char** argv)
 	cudaMemset(dmyNumbers, 0, 2 * numThreads * sizeof(int));
 
 	//============ initializing the hash table and page table ==================//
-	
-	size_t availableGPUMemory = (1 << 30);
-	largeInt hhashTableBufferSize = 3 * availableGPUMemory;
-	void* hhashTableBaseAddr = malloc(hhashTableBufferSize);
-	memset(hhashTableBaseAddr, 0, hhashTableBufferSize);
-	
-	
-	
-
-
-
-	bool failedFlag = false;
 
 	
-	size_t total, free;
-	cudaMemGetInfo(&free, &total);
-	printf("total memory: %luMB, free: %luMB\n", total / (1 << 20), free / (1 << 20));
 
-	int numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
 	multipassBookkeeping_t* mbk = initMultipassBookkeeping(	(int*) hostCompleteFlag, 
 								gpuFlags, 
 								flagSize,
-								hhashTableBaseAddr,
-								hhashTableBufferSize,
 								dmyNumbers, 
-								numGroups, 
 								GROUP_SIZE, 
 								numThreads,
 								epochNum,
 								numRecords);
 
 
-	printf("@INFO: number of page: %d\n", (int)(availableGPUMemory / PAGE_SIZE));
-	printf("@INFO: number of hash groups: %d\n", numGroups);
 	
 	//==========================================================================//
 
@@ -703,6 +682,7 @@ int main(int argc, char** argv)
 
 	gettimeofday(&partial_start, NULL);
 	int passNo = 1;
+	bool failedFlag = false;
 	do
 	{
 		printf("====================== starting pass %d ======================\n", passNo);
@@ -814,8 +794,8 @@ int main(int argc, char** argv)
 
 	
 
-	bucketGroup_t* groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
-	cudaMemcpy(groups, mbk->hconfig->groups, numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
+	bucketGroup_t* groups = (bucketGroup_t*) malloc(mbk->numGroups * sizeof(bucketGroup_t));
+	cudaMemcpy(groups, mbk->hconfig->groups, mbk->numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
 
 #ifdef DISPLAY_RESULTS
 	int j = 0;
@@ -857,7 +837,7 @@ int main(int argc, char** argv)
 	int totalValidBuckets = 0;
 	int totalEmpty = 0;
 	int maximumDepth = 0;
-	for(int i = 0; i < numGroups; i ++)
+	for(int i = 0; i < mbk->numGroups; i ++)
 	{
 		for(int j = 0; j < GROUP_SIZE; j ++)
 		{
