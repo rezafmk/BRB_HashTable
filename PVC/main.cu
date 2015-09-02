@@ -663,18 +663,8 @@ int main(int argc, char** argv)
 	
 	
 	
-	char* dstates;
-	cudaMalloc((void**) &dstates, numRecords * sizeof(char));
-	cudaMemset(dstates, 0, numRecords * sizeof(char));
 
-	bool* dfailedFlag;
-	cudaMalloc((void**) &dfailedFlag, sizeof(bool));
-	cudaMemset(dfailedFlag, 0, sizeof(bool));
 
-	char* depochSuccessStatus;
-	cudaMalloc((void**) &depochSuccessStatus, epochNum * sizeof(char));
-	cudaMemset(depochSuccessStatus, 0, epochNum * sizeof(char));
-	char* epochSuccessStatus = (char*) malloc(epochNum * sizeof(char));
 
 	bool failedFlag = false;
 
@@ -683,23 +673,18 @@ int main(int argc, char** argv)
 	cudaMemGetInfo(&free, &total);
 	printf("total memory: %luMB, free: %luMB\n", total / (1 << 20), free / (1 << 20));
 
-	cudaStream_t serviceStream;
-	cudaStreamCreate(&serviceStream);
-
 	int numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
 	multipassBookkeeping_t* mbk = initMultipassBookkeeping(	(int*) hostCompleteFlag, 
 								gpuFlags, 
 								flagSize,
-								dfailedFlag, 
 								hhashTableBaseAddr,
 								hhashTableBufferSize,
 								dmyNumbers, 
-								epochSuccessStatus,
-								depochSuccessStatus,
 								numGroups, 
 								GROUP_SIZE, 
 								numThreads,
-								epochNum);
+								epochNum,
+								numRecords);
 
 
 	printf("@INFO: number of page: %d\n", (int)(availableGPUMemory / PAGE_SIZE));
@@ -738,9 +723,9 @@ int main(int argc, char** argv)
 				numThreads,
 				mbk->dpconfig,
 				mbk->dhconfig,
-				dstates,
-				dfailedFlag,
-				depochSuccessStatus
+				mbk->dstates,
+				mbk->dfailedFlag,
+				mbk->depochSuccessStatus
 				);
 
 

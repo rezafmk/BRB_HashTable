@@ -205,22 +205,19 @@ __global__ void setGroupsPointersDead(bucketGroup_t* groups, int numGroups)
 multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag, 
 						int* gpuFlags, 
 						int flagSize,
-						bool* dfailedFlag, 
 						void* hhashTableBaseAddr,
 						largeInt hhashTableBufferSize,
 						int* dmyNumbers, 
-						char* epochSuccessStatus,
-						char* depochSuccessStatus,
 						int numGroups, 
 						int groupSize,
 						int numThreads,
-						int epochNum)
+						int epochNum,
+						int numRecords)
 {
 	
 	multipassBookkeeping_t* mbk = (multipassBookkeeping_t*) malloc(sizeof(multipassBookkeeping_t));
 	mbk->hostCompleteFlag = hostCompleteFlag;
 	mbk->gpuFlags = gpuFlags;
-	mbk->dfailedFlag = dfailedFlag;
 	mbk->dmyNumbers = dmyNumbers;
 	mbk->myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
 	mbk->flagSize = flagSize;
@@ -229,9 +226,16 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	mbk->numThreads = numThreads;
 	mbk->hhashTableBaseAddr = hhashTableBaseAddr;
 	mbk->hhashTableBufferSize = hhashTableBufferSize;
-	mbk->epochSuccessStatus = epochSuccessStatus;
-	mbk->depochSuccessStatus = depochSuccessStatus;
 	mbk->epochNum = epochNum;
+	mbk->numRecords = numRecords;
+
+	cudaMalloc((void**) &(mbk->dfailedFlag), sizeof(bool));
+	cudaMemset(mbk->dfailedFlag, 0, sizeof(bool));
+
+
+	cudaMalloc((void**) &(mbk->depochSuccessStatus), epochNum * sizeof(char));
+	cudaMemset(mbk->depochSuccessStatus, 0, epochNum * sizeof(char));
+	mbk->epochSuccessStatus = (char*) malloc(epochNum * sizeof(char));
 
 
 	size_t availableGPUMemory = (1 << 30);
@@ -251,6 +255,10 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 
 	cudaMalloc((void**) &(mbk->dhconfig), sizeof(hashtableConfig_t));
 	cudaMemcpy(mbk->dhconfig, mbk->hconfig, sizeof(hashtableConfig_t), cudaMemcpyHostToDevice);
+
+	cudaMalloc((void**) &(mbk->dstates), mbk->numRecords * sizeof(char));
+	cudaMemset(mbk->dstates, 0, mbk->numRecords * sizeof(char));
+
 
 
 	return mbk;

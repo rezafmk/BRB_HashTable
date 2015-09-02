@@ -96,11 +96,13 @@ typedef struct
 	largeInt hhashTableBufferSize;
 	char* epochSuccessStatus;
 	char* depochSuccessStatus;
+	char* dstates;
 	int numGroups;
 	int groupSize;
 	int flagSize;
 	int numThreads;
 	int epochNum;
+	int numRecords;
 } multipassBookkeeping_t;
 
 
@@ -123,16 +125,14 @@ __device__ bool atomicNegateRefCount(int* refCount);
 multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag, 
 						int* gpuFlags, 
 						int flagSize,
-						bool* dfailedFlag, 
 						void* hhashTableBaseAddr,
 						largeInt hhashTableBufferSize,
 						int* dmyNumbers, 
-						char* epochSuccessStatus,
-						char* depochSuccessStatus,
 						int numGroups, 
 						int groupSize,
 						int numThreads,
-						int epochNum);
+						int epochNum,
+						int numRecords);
 
 __global__ void setGroupsPointersDead(bucketGroup_t* groups, int numGroups);
 bool checkAndResetPass(multipassBookkeeping_t* mbk);
