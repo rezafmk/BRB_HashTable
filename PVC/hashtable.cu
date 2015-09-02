@@ -202,7 +202,7 @@ __global__ void setGroupsPointersDead(bucketGroup_t* groups, int numGroups)
 
 
 
-multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag, 
+multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag, 
 						int* gpuFlags, 
 						int flagSize,
 						int groupSize,
@@ -211,7 +211,7 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 						int numRecords)
 {
 	
-	multipassBookkeeping_t* mbk = (multipassBookkeeping_t*) malloc(sizeof(multipassBookkeeping_t));
+	multipassConfig_t* mbk = (multipassConfig_t*) malloc(sizeof(multipassConfig_t));
 	mbk->hostCompleteFlag = hostCompleteFlag;
 	mbk->gpuFlags = gpuFlags;
 	mbk->flagSize = flagSize;
@@ -271,7 +271,7 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	return mbk;
 }
 
-bool checkAndResetPass(multipassBookkeeping_t* mbk)
+bool checkAndResetPass(multipassConfig_t* mbk)
 {
 	bool failedFlag = false;
 	int* hostCompleteFlag = mbk->hostCompleteFlag;
@@ -344,6 +344,17 @@ bool checkAndResetPass(multipassBookkeeping_t* mbk)
 	printf("Total failure: %lld\n", totalFailed);
 
 	return failedFlag;
+}
+
+void* getKey(hashBucket_t* bucket)
+{
+	return (void*) ((largeInt) bucket + sizeof(hashBucket_t));
+}
+
+void* getValue(hashBucket_t* bucket)
+{
+	int keySizeAligned = (bucket->keySize % ALIGNMET == 0)? bucket->keySize : bucket->keySize + (ALIGNMET - (bucket->keySize % ALIGNMET));
+	return (void*) ((largeInt) bucket + sizeof(hashBucket_t) + keySizeAligned);
 }
 
 

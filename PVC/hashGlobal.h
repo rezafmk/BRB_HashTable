@@ -104,7 +104,7 @@ typedef struct
 	int numThreads;
 	int epochNum;
 	int numRecords;
-} multipassBookkeeping_t;
+} multipassConfig_t;
 
 
 
@@ -123,7 +123,7 @@ __device__ bool atomicAttemptIncRefCount(int* refCount);
 __device__ int atomicDecRefCount(int* refCount);
 __device__ bool atomicNegateRefCount(int* refCount);
 
-multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag, 
+multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag, 
 						int* gpuFlags, 
 						int flagSize,
 						int groupSize,
@@ -132,5 +132,7 @@ multipassBookkeeping_t* initMultipassBookkeeping(int* hostCompleteFlag,
 						int numRecords);
 
 __global__ void setGroupsPointersDead(bucketGroup_t* groups, int numGroups);
-bool checkAndResetPass(multipassBookkeeping_t* mbk);
+bool checkAndResetPass(multipassConfig_t* mbk);
+void* getKey(hashBucket_t* bucket);
+void* getValue(hashBucket_t* bucket);
 #endif

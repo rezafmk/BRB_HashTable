@@ -11,14 +11,7 @@
 #define EPOCHCHUNK 30
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
-
-typedef struct
-{
-	pagingConfig_t* pconfig;
-	cudaStream_t* serviceStream;
-	cudaStream_t* execStream;
-} dataPackage_t;
-
+#define DISPLAY_RESULTS
 
 
 __global__ void wordCountKernelMultipass(
@@ -651,7 +644,7 @@ int main(int argc, char** argv)
 	cudaStreamCreate(&copyStream);
 	
 	//============ initializing the hash table and page table ==================//
-	multipassBookkeeping_t* mbk = initMultipassBookkeeping(	(int*) hostCompleteFlag, 
+	multipassConfig_t* mbk = initMultipassBookkeeping(	(int*) hostCompleteFlag, 
 								gpuFlags, 
 								flagSize,
 								GROUP_SIZE, 
@@ -786,36 +779,31 @@ int main(int argc, char** argv)
 	cudaMemcpy(groups, mbk->hconfig->groups, mbk->numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
 
 #ifdef DISPLAY_RESULTS
-	int j = 0;
-	char URL[64];
 	int tabCount = 0;
-	for(int i = 0; i < 200; i ++)
+	for(int i = 0; i < 10; i ++)
 	{
-		hashBucket_t* bucket = groups[i].buckets[j];
-		if(bucket == NULL)
+		for(int j = 0; j < 5; j ++)
 		{
-			j ++;
-			continue;
+			hashBucket_t* bucket = groups[i].buckets[j];
+
+			while(bucket != NULL)
+			{
+				char* url = (char*) getKey(bucket);
+
+				for(int k = 0; k < tabCount; k ++)
+					printf("\t");
+				printf("URL: ");
+				for(int m = 0; m < bucket->keySize; m ++)
+					printf("%c", url[m]);
+
+				int* value = (int*) getValue(bucket);
+				printf(": %d\n", *value);
+				bucket = bucket->next;
+
+				tabCount ++;
+			}
+			tabCount = 0;
 		}
-
-		while(bucket != NULL)
-		{
-			int keySizeAligned = (bucket->keySize % ALIGNMET == 0)? bucket->keySize : bucket->keySize + (ALIGNMET - (bucket->keySize % ALIGNMET));
-			char* url = (char*) ((largeInt) bucket + sizeof(hashBucket_t));
-
-			for(int k = 0; k < tabCount; k ++)
-				printf("\t");
-			printf("URL: ");
-			for(int m = 0; m < bucket->keySize; m ++)
-				printf("%c", url[m]);
-
-			int* value = (int*) ((largeInt) bucket + sizeof(hashBucket_t) + keySizeAligned);
-			printf(": %d\n", *value);
-			bucket = bucket->next;
-
-			tabCount ++;
-		}
-		tabCount = 0;
 		
 	
 	}
