@@ -8,7 +8,8 @@
 #include <sys/time.h>
 
 #define PAGE_SIZE (1 << 18)
-#define GROUP_SIZE (PAGE_SIZE / 3)
+#define NUM_BUCKETS 10000000
+#define GROUP_SIZE 12000
 #define ALIGNMET 8
 
 #define HOST_BUFFER_SIZE (1 << 31)
@@ -78,7 +79,8 @@ typedef struct
 typedef struct
 {
 	bucketGroup_t* groups;
-	int numBuckets;
+	unsigned numBuckets;
+	unsigned groupSize;
 } hashtableConfig_t;
 
 typedef struct
@@ -98,8 +100,8 @@ typedef struct
 	char* epochSuccessStatus;
 	char* depochSuccessStatus;
 	char* dstates;
-	int numGroups;
-	int groupSize;
+	unsigned numGroups;
+	unsigned groupSize;
 	int flagSize;
 	int numThreads;
 	int epochNum;
@@ -114,7 +116,7 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 __device__ page_t* allocateNewPage(pagingConfig_t* pconfig, int groupNo);
 
 
-void hashtableInit(int numBuckets, hashtableConfig_t* hconfig);
+void hashtableInit(unsigned numBuckets, hashtableConfig_t* hconfig, unsigned groupSize);
 __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets);
 __device__ void resolveSameKeyAddition(void const* key, void* value, void* oldValue);
 __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize, pagingConfig_t* pconfig);
@@ -126,12 +128,12 @@ __device__ bool atomicNegateRefCount(int* refCount);
 multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag, 
 						int* gpuFlags, 
 						int flagSize,
-						int groupSize,
 						int numThreads,
 						int epochNum,
-						int numRecords);
+						int numRecords,
+						int pagePerGroup);
 
-__global__ void setGroupsPointersDead(bucketGroup_t* groups, int numGroups);
+__global__ void setGroupsPointersDead(bucketGroup_t* groups, unsigned numBuckets, unsigned groupSize);
 bool checkAndResetPass(multipassConfig_t* mbk);
 void* getKey(hashBucket_t* bucket);
 void* getValue(hashBucket_t* bucket);

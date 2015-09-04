@@ -5,13 +5,11 @@
 #define TEXTITEMSIZE 1
 #define DATAITEMSIZE 1
 #define RECORD_SIZE 64
-#define NUM_BUCKETS 10000000
 #define GB 1073741824
 
 #define EPOCHCHUNK 30
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
-#define DISPLAY_RESULTS
 
 
 __global__ void wordCountKernelMultipass(
@@ -644,13 +642,14 @@ int main(int argc, char** argv)
 	cudaStreamCreate(&copyStream);
 	
 	//============ initializing the hash table and page table ==================//
+	int pagePerGroup = 4;
 	multipassConfig_t* mbk = initMultipassBookkeeping(	(int*) hostCompleteFlag, 
 								gpuFlags, 
 								flagSize,
-								GROUP_SIZE, 
 								numThreads,
 								epochNum,
-								numRecords);
+								numRecords,
+								pagePerGroup);
 
 	//==========================================================================//
 
@@ -729,7 +728,8 @@ int main(int argc, char** argv)
 		}
 
 
-		while(cudaSuccess != cudaStreamQuery(execStream))
+		//while(cudaSuccess != cudaStreamQuery(execStream))
+		while(cudaErrorNotReady == cudaStreamQuery(execStream))
 			usleep(300);	
 
 

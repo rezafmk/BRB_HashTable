@@ -1,10 +1,11 @@
 #include "hashGlobal.h"
-#define NUM_BUCKETS 10000000
 
-void hashtableInit(int numBuckets, hashtableConfig_t* hconfig)
+void hashtableInit(unsigned numBuckets, hashtableConfig_t* hconfig, unsigned groupSize)
 {
 	hconfig->numBuckets = numBuckets;
-	int numGroups = (numBuckets + (GROUP_SIZE - 1)) / GROUP_SIZE;
+	hconfig->groupSize = groupSize;
+	int numGroups = (numBuckets + (groupSize - 1)) / groupSize;
+	//int numGroups = (numBuckets + (GROUP_SIZE - 1)) / GROUP_SIZE;
 	cudaMalloc((void**) &(hconfig->groups), numGroups * sizeof(bucketGroup_t));
 	cudaMemset(hconfig->groups, 0, numGroups * sizeof(bucketGroup_t));
 	//hconfig->groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
@@ -122,8 +123,10 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 	bool success = true;
 	unsigned hashValue = hashFunc((char*) key, keySize, hconfig->numBuckets);
 
-	unsigned groupNo = hashValue / GROUP_SIZE;
-	unsigned offsetWithinGroup = hashValue % GROUP_SIZE;
+	unsigned groupNo = hashValue / hconfig->groupSize;
+	unsigned offsetWithinGroup = hashValue % hconfig->groupSize;
+	//unsigned groupNo = hashValue / GROUP_SIZE;
+	//unsigned offsetWithinGroup = hashValue % GROUP_SIZE;
 
 	bucketGroup_t* group = &(hconfig->groups[groupNo]);
 	
@@ -188,13 +191,13 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 	return success;
 }
 
-__global__ void setGroupsPointersDead(bucketGroup_t* groups, int numGroups)
+__global__ void setGroupsPointersDead(bucketGroup_t* groups, unsigned numBuckets, unsigned groupSize)
 {
 	int index = TID;
-	if(index < (numGroups * GROUP_SIZE))
+	if(index < numBuckets)
 	{
-		int i = index / GROUP_SIZE;
-		int j = index % GROUP_SIZE;
+		int i = index / groupSize;
+		int j = index % groupSize;
 		groups[i].isNextDead[j] = 1;
 	}
 	
@@ -205,30 +208,32 @@ __global__ void setGroupsPointersDead(bucketGroup_t* groups, int numGroups)
 multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag, 
 						int* gpuFlags, 
 						int flagSize,
-						int groupSize,
 						int numThreads,
 						int epochNum,
-						int numRecords)
+						int numRecords,
+						int pagePerGroup)
 {
 	
 	multipassConfig_t* mbk = (multipassConfig_t*) malloc(sizeof(multipassConfig_t));
 	mbk->hostCompleteFlag = hostCompleteFlag;
 	mbk->gpuFlags = gpuFlags;
 	mbk->flagSize = flagSize;
-	mbk->groupSize = groupSize;
 	mbk->numThreads = numThreads;
 	mbk->epochNum = epochNum;
 	mbk->numRecords = numRecords;
-	mbk->numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
 
-	mbk->myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
-	cudaMalloc((void**) &(mbk->dmyNumbers), 2 * numThreads * sizeof(int));
-	cudaMemset((mbk->dmyNumbers), 0, 2 * numThreads * sizeof(int));
 
-	mbk->availableGPUMemory = (1 << 30);
+	mbk->availableGPUMemory = (625 * (1 << 20));
 	mbk->hhashTableBufferSize = 3 * mbk->availableGPUMemory;
 	mbk->hhashTableBaseAddr = malloc(mbk->hhashTableBufferSize);
 	memset(mbk->hhashTableBaseAddr, 0, mbk->hhashTableBufferSize);
+
+	int availableNumPages = mbk->availableGPUMemory / PAGE_SIZE;
+	mbk->groupSize = (pagePerGroup * NUM_BUCKETS) / availableNumPages;
+	mbk->numGroups = (NUM_BUCKETS + (mbk->groupSize - 1)) / mbk->groupSize;
+	//mbk->numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
+	printf("############# groupSize: %d, number of groups: %d\n", mbk->groupSize, mbk->numGroups);
+
 
 	cudaMalloc((void**) &(mbk->dfailedFlag), sizeof(bool));
 	cudaMemset(mbk->dfailedFlag, 0, sizeof(bool));
@@ -239,15 +244,14 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	mbk->epochSuccessStatus = (char*) malloc(epochNum * sizeof(char));
 
 
-	size_t availableGPUMemory = (1 << 30);
 	mbk->pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
 	memset(mbk->pconfig, 0, sizeof(pagingConfig_t));
 	// Calling initPaging
-	initPaging(availableGPUMemory, mbk->pconfig);
+	initPaging(mbk->availableGPUMemory, mbk->pconfig);
 	mbk->pconfig->hashTableOffset = (largeInt) mbk->hhashTableBaseAddr;
 
 	mbk->hconfig = (hashtableConfig_t*) malloc(sizeof(hashtableConfig_t));
-	hashtableInit(NUM_BUCKETS, mbk->hconfig);
+	hashtableInit(NUM_BUCKETS, mbk->hconfig, mbk->groupSize);
 	
 	
 	printf("@INFO: transferring config structs to GPU memory\n");
@@ -259,6 +263,11 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 
 	cudaMalloc((void**) &(mbk->dstates), mbk->numRecords * sizeof(char));
 	cudaMemset(mbk->dstates, 0, mbk->numRecords * sizeof(char));
+
+
+	mbk->myNumbers = (int*) malloc(2 * numThreads * sizeof(int));
+	cudaMalloc((void**) &(mbk->dmyNumbers), 2 * numThreads * sizeof(int));
+	cudaMemset((mbk->dmyNumbers), 0, 2 * numThreads * sizeof(int));
 
 	size_t total, free;
 	cudaMemGetInfo(&free, &total);
@@ -286,11 +295,11 @@ bool checkAndResetPass(multipassConfig_t* mbk)
 	void* hhashTableBaseAddr = mbk->hhashTableBaseAddr;
 	largeInt hhashTableBufferSize = mbk->hhashTableBufferSize;
 	int numGroups = mbk->numGroups;
-	int groupSize = mbk->groupSize;
 	int numThreads = mbk->numThreads;
 	char* epochSuccessStatus = mbk->epochSuccessStatus;
 	char* depochSuccessStatus = mbk->depochSuccessStatus;
 	int epochNum = mbk->epochNum;
+	int groupSize = mbk->groupSize;
 
 	cudaMemcpy(epochSuccessStatus, depochSuccessStatus, epochNum * sizeof(char), cudaMemcpyDeviceToHost);
 	for(int i = 0; i < epochNum; i ++)
@@ -326,7 +335,9 @@ bool checkAndResetPass(multipassConfig_t* mbk)
 
 	cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
 
-	setGroupsPointersDead<<<(((numGroups * groupSize) + 256) / 255), 256>>>(hconfig->groups, numGroups);
+	printf("################ interesting, groupSize is %d, while GROUP_SIZE is %d\n", groupSize, GROUP_SIZE);
+	setGroupsPointersDead<<<(((NUM_BUCKETS) + 256) / 255), 256>>>(hconfig->groups, NUM_BUCKETS, groupSize);
+	//setGroupsPointersDead<<<(((NUM_BUCKETS) + 256) / 255), 256>>>(hconfig->groups, NUM_BUCKETS, GROUP_SIZE);
 	cudaThreadSynchronize();
 
 	cudaMemcpy(myNumbers, dmyNumbers, 2 * numThreads * sizeof(int), cudaMemcpyDeviceToHost);
