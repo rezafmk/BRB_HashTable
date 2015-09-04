@@ -753,6 +753,7 @@ int main(int argc, char** argv)
 		
 
 		gettimeofday(&bookkeeping_start, NULL);
+		// Doing the bookkeeping
 		failedFlag = checkAndResetPass(mbk);
 		
 		
@@ -775,37 +776,34 @@ int main(int argc, char** argv)
 	printf("\n%10s:\t\t%0.1fms\n", "Total time", (double)((double)diff/1000.0));
 
 	
-	bucketGroup_t* groups = (bucketGroup_t*) malloc(mbk->numGroups * sizeof(bucketGroup_t));
-	cudaMemcpy(groups, mbk->hconfig->groups, mbk->numGroups * sizeof(bucketGroup_t), cudaMemcpyDeviceToHost);
+	hashBucket_t* buckets = (hashBucket_t*) malloc(NUM_BUCKETS * sizeof(hashBucket_t));
+	cudaMemcpy(buckets, mbk->hconfig->buckets, NUM_BUCKETS * sizeof(hashBucket_t), cudaMemcpyDeviceToHost);
+	
 
 #ifdef DISPLAY_RESULTS
 	int tabCount = 0;
 	for(int i = 0; i < 10; i ++)
 	{
-		for(int j = 0; j < 5; j ++)
+		hashBucket_t* bucket = &(buckets[i]);
+
+		while(bucket != NULL)
 		{
-			hashBucket_t* bucket = groups[i].buckets[j];
+			char* url = (char*) getKey(bucket);
 
-			while(bucket != NULL)
-			{
-				char* url = (char*) getKey(bucket);
+			for(int k = 0; k < tabCount; k ++)
+				printf("\t");
+			printf("URL: ");
+			for(int m = 0; m < bucket->keySize; m ++)
+				printf("%c", url[m]);
 
-				for(int k = 0; k < tabCount; k ++)
-					printf("\t");
-				printf("URL: ");
-				for(int m = 0; m < bucket->keySize; m ++)
-					printf("%c", url[m]);
+			int* value = (int*) getValue(bucket);
+			printf(": %d\n", *value);
+			bucket = bucket->next;
 
-				int* value = (int*) getValue(bucket);
-				printf(": %d\n", *value);
-				bucket = bucket->next;
-
-				tabCount ++;
-			}
-			tabCount = 0;
+			tabCount ++;
 		}
-		
-	
+		tabCount = 0;
+
 	}
 #endif
 
@@ -813,27 +811,23 @@ int main(int argc, char** argv)
 	int totalValidBuckets = 0;
 	int totalEmpty = 0;
 	int maximumDepth = 0;
-	for(int i = 0; i < mbk->numGroups; i ++)
+	for(int i = 0; i < NUM_BUCKETS; i ++)
 	{
-		for(int j = 0; j < GROUP_SIZE; j ++)
-		{
-			hashBucket_t* bucket = groups[i].buckets[j];
-			if(bucket == NULL)
-				totalEmpty ++;
-			else
-				totalValidBuckets ++;
+		hashBucket_t* bucket = &(buckets[i]);
+		if(bucket == NULL)
+			totalEmpty ++;
+		else
+			totalValidBuckets ++;
 
-			int localMaxDepth = 0;
-			while(bucket != NULL)
-			{
-				totalDepth ++;
-				localMaxDepth ++;
-				bucket = bucket->next;
-			}
-			if(localMaxDepth > maximumDepth)
-				maximumDepth = localMaxDepth;
+		int localMaxDepth = 0;
+		while(bucket != NULL)
+		{
+			totalDepth ++;
+			localMaxDepth ++;
+			bucket = bucket->next;
 		}
-	
+		if(localMaxDepth > maximumDepth)
+			maximumDepth = localMaxDepth;
 	}
 
 	float emptyPercentage = ((float) totalEmpty / (float) NUM_BUCKETS) * (float) 100;

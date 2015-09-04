@@ -5,10 +5,15 @@ void hashtableInit(unsigned numBuckets, hashtableConfig_t* hconfig, unsigned gro
 	hconfig->numBuckets = numBuckets;
 	hconfig->groupSize = groupSize;
 	int numGroups = (numBuckets + (groupSize - 1)) / groupSize;
-	//int numGroups = (numBuckets + (GROUP_SIZE - 1)) / GROUP_SIZE;
 	cudaMalloc((void**) &(hconfig->groups), numGroups * sizeof(bucketGroup_t));
+	cudaMalloc((void**) &(hconfig->buckets), numBuckets * sizeof(hashBucket_t*));
+	cudaMalloc((void**) &(hconfig->locks), numBuckets * sizeof(unsigned));
+	cudaMalloc((void**) &(hconfig->isNextDeads), numBuckets * sizeof(short));
+	
 	cudaMemset(hconfig->groups, 0, numGroups * sizeof(bucketGroup_t));
-	//hconfig->groups = (bucketGroup_t*) malloc(numGroups * sizeof(bucketGroup_t));
+	cudaMemset(hconfig->buckets, 0, numBuckets * sizeof(hashBucket_t*));
+	cudaMemset(hconfig->locks, 0, numBuckets * sizeof(unsigned));
+	cudaMemset(hconfig->isNextDeads, 0, numBuckets * sizeof(short));
 }
 
 __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
@@ -124,9 +129,7 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 	unsigned hashValue = hashFunc((char*) key, keySize, hconfig->numBuckets);
 
 	unsigned groupNo = hashValue / hconfig->groupSize;
-	unsigned offsetWithinGroup = hashValue % hconfig->groupSize;
 	//unsigned groupNo = hashValue / GROUP_SIZE;
-	//unsigned offsetWithinGroup = hashValue % GROUP_SIZE;
 
 	bucketGroup_t* group = &(hconfig->groups[groupNo]);
 	
@@ -139,16 +142,16 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 
 	do
 	{
-		oldLock = atomicExch((unsigned*) &(group->locks[offsetWithinGroup]), 1);
+		oldLock = atomicExch((unsigned*) &(hconfig->locks[hashValue]), 1);
 
 		if(oldLock == 0)
 		{
 			hashBucket_t* bucket = NULL;
-			if(group->buckets[offsetWithinGroup] != NULL)
-				bucket = (hashBucket_t*) ((largeInt) group->buckets[offsetWithinGroup] - pconfig->hashTableOffset + (largeInt) pconfig->dbuffer);
+			if(hconfig->buckets[hashValue] != NULL)
+				bucket = (hashBucket_t*) ((largeInt) hconfig->buckets[hashValue] - pconfig->hashTableOffset + (largeInt) pconfig->dbuffer);
 			//First see if the key already exists in one of the entries of this bucket
 			//The returned bucket is the 'entry' in which the key exists
-			if(group->isNextDead[offsetWithinGroup] != 1 && (existingBucket = containsKey(bucket, key, keySize, pconfig)) != NULL)
+			if(hconfig->isNextDeads[hashValue] != 1 && (existingBucket = containsKey(bucket, key, keySize, pconfig)) != NULL)
 			{
 				void* oldValue = (void*) ((largeInt) existingBucket + sizeof(hashBucket_t) + keySizeAligned);
 				resolveSameKeyAddition(key, value, oldValue);
@@ -160,17 +163,16 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 				{
 					//TODO reduce the base offset if not null
 					//newBucket->next = (bucket == NULL)? NULL : (hashBucket_t*) ((largeInt) bucket - (largeInt) pconfig->dbuffer);
-					//group->failed = 1;
 					newBucket->next = NULL;
 					if(bucket != NULL)
 						newBucket->next = (hashBucket_t*) ((largeInt) bucket - (largeInt) pconfig->dbuffer + pconfig->hashTableOffset);
-					if(group->isNextDead[offsetWithinGroup] == 1)
+					if(hconfig->isNextDeads[hashValue] == 1)
 						newBucket->isNextDead = 1;
 					newBucket->keySize = (short) keySize;
 					newBucket->valueSize = (short) valueSize;
 						
-					group->buckets[offsetWithinGroup] = (hashBucket_t*) ((largeInt) newBucket - (largeInt) pconfig->dbuffer + pconfig->hashTableOffset);
-					group->isNextDead[offsetWithinGroup] = 0;
+					hconfig->buckets[hashValue] = (hashBucket_t*) ((largeInt) newBucket - (largeInt) pconfig->dbuffer + pconfig->hashTableOffset);
+					hconfig->isNextDeads[hashValue] = 0;
 
 					//TODO: this assumes that input key is aligned by ALIGNMENT, which is not a safe assumption
 					for(int i = 0; i < (keySizeAligned / ALIGNMET); i ++)
@@ -184,21 +186,19 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 				}
 			}
 
-			atomicExch((unsigned*) &(group->locks[offsetWithinGroup]), 0);
+			atomicExch((unsigned*) &(hconfig->locks[hashValue]), 0);
 		}
 	} while(oldLock == 1);
 
 	return success;
 }
 
-__global__ void setGroupsPointersDead(bucketGroup_t* groups, unsigned numBuckets, unsigned groupSize)
+__global__ void setGroupsPointersDead(hashtableConfig_t* hconfig, unsigned numBuckets)
 {
 	int index = TID;
 	if(index < numBuckets)
 	{
-		int i = index / groupSize;
-		int j = index % groupSize;
-		groups[i].isNextDead[j] = 1;
+		hconfig->isNextDeads[index] = 1;
 	}
 	
 }
@@ -336,7 +336,7 @@ bool checkAndResetPass(multipassConfig_t* mbk)
 	cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
 
 	printf("################ interesting, groupSize is %d, while GROUP_SIZE is %d\n", groupSize, GROUP_SIZE);
-	setGroupsPointersDead<<<(((NUM_BUCKETS) + 256) / 255), 256>>>(hconfig->groups, NUM_BUCKETS, groupSize);
+	setGroupsPointersDead<<<(((NUM_BUCKETS) + 255) / 256), 256>>>(hconfig, NUM_BUCKETS);
 	//setGroupsPointersDead<<<(((NUM_BUCKETS) + 256) / 255), 256>>>(hconfig->groups, NUM_BUCKETS, GROUP_SIZE);
 	cudaThreadSynchronize();
 

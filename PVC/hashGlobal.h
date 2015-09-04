@@ -63,22 +63,18 @@ typedef struct hashBucket_t
 
 typedef struct
 {
-	hashBucket_t* buckets[GROUP_SIZE];
-	unsigned locks[GROUP_SIZE];
-	short isNextDead[GROUP_SIZE];
 	page_t* parentPage;
+	unsigned startBucketId;
 	unsigned pageLock;
-	volatile int failed;
-	int refCount;
-	int inactive;
-	int failedRequests;
-	int needed;
-
 } bucketGroup_t;
+
 
 typedef struct
 {
 	bucketGroup_t* groups;
+	hashBucket_t** buckets;
+	unsigned* locks;
+	short* isNextDeads;
 	unsigned numBuckets;
 	unsigned groupSize;
 } hashtableConfig_t;
@@ -133,7 +129,7 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 						int numRecords,
 						int pagePerGroup);
 
-__global__ void setGroupsPointersDead(bucketGroup_t* groups, unsigned numBuckets, unsigned groupSize);
+__global__ void setGroupsPointersDead(hashtableConfig_t* hconfig, unsigned numBuckets);;
 bool checkAndResetPass(multipassConfig_t* mbk);
 void* getKey(hashBucket_t* bucket);
 void* getValue(hashBucket_t* bucket);
