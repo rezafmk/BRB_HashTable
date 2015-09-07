@@ -748,7 +748,6 @@ int main(int argc, char** argv)
 			endGlobalTimer(m, "@@ computation");
 
 
-
 		//======================= Some reseting ===========================
 		
 
@@ -764,6 +763,7 @@ int main(int argc, char** argv)
 		printf("\n%10s:\t\t%0.1fms\n", "Pass bookkeeping", (double)((double)diff/1000.0));
 
 
+
 		passNo ++;
 
 
@@ -776,15 +776,15 @@ int main(int argc, char** argv)
 	printf("\n%10s:\t\t%0.1fms\n", "Total time", (double)((double)diff/1000.0));
 
 	
-	hashBucket_t* buckets = (hashBucket_t*) malloc(NUM_BUCKETS * sizeof(hashBucket_t));
-	cudaMemcpy(buckets, mbk->hconfig->buckets, NUM_BUCKETS * sizeof(hashBucket_t), cudaMemcpyDeviceToHost);
+	hashBucket_t** buckets = (hashBucket_t**) malloc(NUM_BUCKETS * sizeof(hashBucket_t*));
+	cudaMemcpy(buckets, mbk->hconfig->buckets, NUM_BUCKETS * sizeof(hashBucket_t*), cudaMemcpyDeviceToHost);
 	
 
 #ifdef DISPLAY_RESULTS
 	int tabCount = 0;
-	for(int i = 0; i < 10; i ++)
+	for(int i = 0; i < 100; i ++)
 	{
-		hashBucket_t* bucket = &(buckets[i]);
+		hashBucket_t* bucket = buckets[i];
 
 		while(bucket != NULL)
 		{
@@ -813,7 +813,7 @@ int main(int argc, char** argv)
 	int maximumDepth = 0;
 	for(int i = 0; i < NUM_BUCKETS; i ++)
 	{
-		hashBucket_t* bucket = &(buckets[i]);
+		hashBucket_t* bucket = buckets[i];
 		if(bucket == NULL)
 			totalEmpty ++;
 		else

@@ -288,7 +288,7 @@ bool checkAndResetPass(multipassConfig_t* mbk)
 	bool* dfailedFlag = mbk->dfailedFlag;
 	pagingConfig_t* pconfig = mbk->pconfig;
 	pagingConfig_t* dpconfig = mbk->dpconfig;
-	hashtableConfig_t* hconfig = mbk->hconfig;
+	hashtableConfig_t* dhconfig = mbk->dhconfig;
 	int* dmyNumbers = mbk->dmyNumbers;
 	int* myNumbers = mbk->myNumbers;
 	int flagSize = mbk->flagSize;
@@ -335,10 +335,13 @@ bool checkAndResetPass(multipassConfig_t* mbk)
 
 	cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
 
-	printf("################ interesting, groupSize is %d, while GROUP_SIZE is %d\n", groupSize, GROUP_SIZE);
-	setGroupsPointersDead<<<(((NUM_BUCKETS) + 255) / 256), 256>>>(hconfig, NUM_BUCKETS);
+	printf("Before calling setGroupPointer, number of grids: %d\n", ((NUM_BUCKETS) + 1023) / 1024);
+	setGroupsPointersDead<<<(((NUM_BUCKETS) + 1023) / 1024), 1024>>>(dhconfig, NUM_BUCKETS);
 	//setGroupsPointersDead<<<(((NUM_BUCKETS) + 256) / 255), 256>>>(hconfig->groups, NUM_BUCKETS, GROUP_SIZE);
 	cudaThreadSynchronize();
+
+	cudaError_t errR = cudaGetLastError();
+	printf("#######Error after setGroupPointer is: %s\n", cudaGetErrorString(errR));
 
 	cudaMemcpy(myNumbers, dmyNumbers, 2 * numThreads * sizeof(int), cudaMemcpyDeviceToHost);
 	cudaMemset(dmyNumbers, 0, 2 * numThreads * sizeof(int));
