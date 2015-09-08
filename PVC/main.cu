@@ -12,7 +12,7 @@
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 
 
-__global__ void wordCountKernelMultipass(
+__global__ void pageViewCountKernelMultipass(
 				char* data, 
 				int numRecords,
 				ptr_t* textAddrs,
@@ -23,17 +23,16 @@ __global__ void wordCountKernelMultipass(
 				firstLastAddr_t* firstLastAddrsSpace1,
 				int iterations,
 				int epochNum, 
-				int* myNumbers,
 				int numThreads,
-				pagingConfig_t* pconfig,
-				hashtableConfig_t* hconfig,
-				char* states,
-				bool* failedFlag,
-				char* epochSuccessStatus
+				multipassConfig_t* mbk,
+				char* states
 				)
 {
 	int index = TID2;
 	bool prediction = (threadIdx.x < BLOCKSIZE);
+	int* myNumbers = mbk->dmyNumbers;
+	bool* failedFlag = mbk->dfailedFlag;
+	char* epochSuccessStatus = mbk->depochSuccessStatus;
 
 	int chunkSize = numRecords / numThreads;
 	chunkSize = (numRecords % numThreads == 0)? chunkSize : chunkSize + 1;
@@ -229,7 +228,7 @@ __global__ void wordCountKernelMultipass(
 				if(states[i] == (char) 0)
 				{
 					largeInt value = 1;
-					if(addToHashtable((void*) URL, urlSize, (void*) &value, sizeof(largeInt), hconfig, pconfig) == true)
+					if(addToHashtable((void*) URL, urlSize, (void*) &value, sizeof(largeInt), mbk) == true)
 					{
 						myNumbers[index * 2] ++;
 						states[i] = SUCCEED;
@@ -650,6 +649,9 @@ int main(int argc, char** argv)
 								epochNum,
 								numRecords,
 								pagePerGroup);
+	multipassConfig_t* dmbk;
+	cudaMalloc((void**) &dmbk, sizeof(multipassConfig_t));
+	cudaMemcpy(dmbk, mbk, sizeof(multipassConfig_t), cudaMemcpyHostToDevice);
 
 	//==========================================================================//
 
@@ -669,7 +671,7 @@ int main(int argc, char** argv)
 		printf("====================== starting pass %d ======================\n", passNo);
 		gettimeofday(&passtime_start, NULL);
 
-		wordCountKernelMultipass<<<grid, block2, 0, execStream>>>(
+		pageViewCountKernelMultipass<<<grid, block2, 0, execStream>>>(
 				phony, 
 				numRecords, //TODO fill this
 				textAddrs,
@@ -680,13 +682,9 @@ int main(int argc, char** argv)
 				firstLastAddrsSpace1,
 				iterations,
 				epochNum,
-				mbk->dmyNumbers,
 				numThreads,
-				mbk->dpconfig,
-				mbk->dhconfig,
-				mbk->dstates,
-				mbk->dfailedFlag,
-				mbk->depochSuccessStatus
+				dmbk,
+				mbk->dstates
 				);
 
 
@@ -753,7 +751,7 @@ int main(int argc, char** argv)
 
 		gettimeofday(&bookkeeping_start, NULL);
 		// Doing the bookkeeping
-		failedFlag = checkAndResetPass(mbk);
+		failedFlag = checkAndResetPass(mbk, dmbk);
 		
 		
 		gettimeofday(&bookkeeping_end, NULL);
@@ -763,9 +761,7 @@ int main(int argc, char** argv)
 		printf("\n%10s:\t\t%0.1fms\n", "Pass bookkeeping", (double)((double)diff/1000.0));
 
 
-
 		passNo ++;
-
 
 	} while(failedFlag);
 
@@ -777,7 +773,7 @@ int main(int argc, char** argv)
 
 	
 	hashBucket_t** buckets = (hashBucket_t**) malloc(NUM_BUCKETS * sizeof(hashBucket_t*));
-	cudaMemcpy(buckets, mbk->hconfig->buckets, NUM_BUCKETS * sizeof(hashBucket_t*), cudaMemcpyDeviceToHost);
+	cudaMemcpy(buckets, mbk->buckets, NUM_BUCKETS * sizeof(hashBucket_t*), cudaMemcpyDeviceToHost);
 	
 
 #ifdef DISPLAY_RESULTS

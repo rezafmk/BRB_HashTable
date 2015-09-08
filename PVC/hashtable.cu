@@ -1,19 +1,19 @@
 #include "hashGlobal.h"
 
-void hashtableInit(unsigned numBuckets, hashtableConfig_t* hconfig, unsigned groupSize)
+void hashtableInit(unsigned numBuckets, multipassConfig_t* mbk, unsigned groupSize)
 {
-	hconfig->numBuckets = numBuckets;
-	hconfig->groupSize = groupSize;
+	mbk->numBuckets = numBuckets;
+	mbk->groupSize = groupSize;
 	int numGroups = (numBuckets + (groupSize - 1)) / groupSize;
-	cudaMalloc((void**) &(hconfig->groups), numGroups * sizeof(bucketGroup_t));
-	cudaMalloc((void**) &(hconfig->buckets), numBuckets * sizeof(hashBucket_t*));
-	cudaMalloc((void**) &(hconfig->locks), numBuckets * sizeof(unsigned));
-	cudaMalloc((void**) &(hconfig->isNextDeads), numBuckets * sizeof(short));
+	cudaMalloc((void**) &(mbk->groups), numGroups * sizeof(bucketGroup_t));
+	cudaMalloc((void**) &(mbk->buckets), numBuckets * sizeof(hashBucket_t*));
+	cudaMalloc((void**) &(mbk->locks), numBuckets * sizeof(unsigned));
+	cudaMalloc((void**) &(mbk->isNextDeads), numBuckets * sizeof(short));
 	
-	cudaMemset(hconfig->groups, 0, numGroups * sizeof(bucketGroup_t));
-	cudaMemset(hconfig->buckets, 0, numBuckets * sizeof(hashBucket_t*));
-	cudaMemset(hconfig->locks, 0, numBuckets * sizeof(unsigned));
-	cudaMemset(hconfig->isNextDeads, 0, numBuckets * sizeof(short));
+	cudaMemset(mbk->groups, 0, numGroups * sizeof(bucketGroup_t));
+	cudaMemset(mbk->buckets, 0, numBuckets * sizeof(hashBucket_t*));
+	cudaMemset(mbk->locks, 0, numBuckets * sizeof(unsigned));
+	cudaMemset(mbk->isNextDeads, 0, numBuckets * sizeof(short));
 }
 
 __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
@@ -40,7 +40,7 @@ __device__ void resolveSameKeyAddition(void const* key, void* value, void* oldVa
 	*((int*) oldValue) += 1;
 }
 
-__device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize, pagingConfig_t* pconfig)
+__device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize, multipassConfig_t* mbk)
 {
 	while(bucket != NULL)
 	{
@@ -59,7 +59,7 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 			break;
 
 		if(bucket->isNextDead == 0 && bucket->next != NULL)
-			bucket = (hashBucket_t*) ((largeInt) bucket->next - pconfig->hashTableOffset + (largeInt) pconfig->dbuffer);
+			bucket = (hashBucket_t*) ((largeInt) bucket->next - mbk->hashTableOffset + (largeInt) mbk->dbuffer);
 		else
 			bucket = NULL;
 	}
@@ -123,15 +123,15 @@ __device__ bool atomicNegateRefCount(int* refCount)
 	
 }
 
-__device__ bool addToHashtable(void* key, int keySize, void* value, int valueSize, hashtableConfig_t* hconfig, pagingConfig_t* pconfig)
+__device__ bool addToHashtable(void* key, int keySize, void* value, int valueSize, multipassConfig_t* mbk)
 {
 	bool success = true;
-	unsigned hashValue = hashFunc((char*) key, keySize, hconfig->numBuckets);
+	unsigned hashValue = hashFunc((char*) key, keySize, mbk->numBuckets);
 
-	unsigned groupNo = hashValue / hconfig->groupSize;
+	unsigned groupNo = hashValue / mbk->groupSize;
 	//unsigned groupNo = hashValue / GROUP_SIZE;
 
-	bucketGroup_t* group = &(hconfig->groups[groupNo]);
+	bucketGroup_t* group = &(mbk->groups[groupNo]);
 	
 	hashBucket_t* existingBucket;
 
@@ -142,37 +142,37 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 
 	do
 	{
-		oldLock = atomicExch((unsigned*) &(hconfig->locks[hashValue]), 1);
+		oldLock = atomicExch((unsigned*) &(mbk->locks[hashValue]), 1);
 
 		if(oldLock == 0)
 		{
 			hashBucket_t* bucket = NULL;
-			if(hconfig->buckets[hashValue] != NULL)
-				bucket = (hashBucket_t*) ((largeInt) hconfig->buckets[hashValue] - pconfig->hashTableOffset + (largeInt) pconfig->dbuffer);
+			if(mbk->buckets[hashValue] != NULL)
+				bucket = (hashBucket_t*) ((largeInt) mbk->buckets[hashValue] - mbk->hashTableOffset + (largeInt) mbk->dbuffer);
 			//First see if the key already exists in one of the entries of this bucket
 			//The returned bucket is the 'entry' in which the key exists
-			if(hconfig->isNextDeads[hashValue] != 1 && (existingBucket = containsKey(bucket, key, keySize, pconfig)) != NULL)
+			if(mbk->isNextDeads[hashValue] != 1 && (existingBucket = containsKey(bucket, key, keySize, mbk)) != NULL)
 			{
 				void* oldValue = (void*) ((largeInt) existingBucket + sizeof(hashBucket_t) + keySizeAligned);
 				resolveSameKeyAddition(key, value, oldValue);
 			}
 			else
 			{
-				hashBucket_t* newBucket = (hashBucket_t*) multipassMalloc(sizeof(hashBucket_t) + keySizeAligned + valueSizeAligned, group, pconfig, groupNo);
+				hashBucket_t* newBucket = (hashBucket_t*) multipassMalloc(sizeof(hashBucket_t) + keySizeAligned + valueSizeAligned, group, mbk, groupNo);
 				if(newBucket != NULL)
 				{
 					//TODO reduce the base offset if not null
-					//newBucket->next = (bucket == NULL)? NULL : (hashBucket_t*) ((largeInt) bucket - (largeInt) pconfig->dbuffer);
+					//newBucket->next = (bucket == NULL)? NULL : (hashBucket_t*) ((largeInt) bucket - (largeInt) mbk->dbuffer);
 					newBucket->next = NULL;
 					if(bucket != NULL)
-						newBucket->next = (hashBucket_t*) ((largeInt) bucket - (largeInt) pconfig->dbuffer + pconfig->hashTableOffset);
-					if(hconfig->isNextDeads[hashValue] == 1)
+						newBucket->next = (hashBucket_t*) ((largeInt) bucket - (largeInt) mbk->dbuffer + mbk->hashTableOffset);
+					if(mbk->isNextDeads[hashValue] == 1)
 						newBucket->isNextDead = 1;
 					newBucket->keySize = (short) keySize;
 					newBucket->valueSize = (short) valueSize;
 						
-					hconfig->buckets[hashValue] = (hashBucket_t*) ((largeInt) newBucket - (largeInt) pconfig->dbuffer + pconfig->hashTableOffset);
-					hconfig->isNextDeads[hashValue] = 0;
+					mbk->buckets[hashValue] = (hashBucket_t*) ((largeInt) newBucket - (largeInt) mbk->dbuffer + mbk->hashTableOffset);
+					mbk->isNextDeads[hashValue] = 0;
 
 					//TODO: this assumes that input key is aligned by ALIGNMENT, which is not a safe assumption
 					for(int i = 0; i < (keySizeAligned / ALIGNMET); i ++)
@@ -186,19 +186,19 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 				}
 			}
 
-			atomicExch((unsigned*) &(hconfig->locks[hashValue]), 0);
+			atomicExch((unsigned*) &(mbk->locks[hashValue]), 0);
 		}
 	} while(oldLock == 1);
 
 	return success;
 }
 
-__global__ void setGroupsPointersDead(hashtableConfig_t* hconfig, unsigned numBuckets)
+__global__ void setGroupsPointersDead(multipassConfig_t* mbk, unsigned numBuckets)
 {
 	int index = TID;
 	if(index < numBuckets)
 	{
-		hconfig->isNextDeads[index] = 1;
+		mbk->isNextDeads[index] = 1;
 	}
 	
 }
@@ -246,22 +246,14 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	mbk->epochSuccessStatus = (char*) malloc(epochNum * sizeof(char));
 
 
-	mbk->pconfig = (pagingConfig_t*) malloc(sizeof(pagingConfig_t));
-	memset(mbk->pconfig, 0, sizeof(pagingConfig_t));
 	// Calling initPaging
-	initPaging(mbk->availableGPUMemory, mbk->pconfig);
-	mbk->pconfig->hashTableOffset = (largeInt) mbk->hhashTableBaseAddr;
+	initPaging(mbk->availableGPUMemory, mbk);
+	mbk->hashTableOffset = (largeInt) mbk->hhashTableBaseAddr;
 
-	mbk->hconfig = (hashtableConfig_t*) malloc(sizeof(hashtableConfig_t));
-	hashtableInit(NUM_BUCKETS, mbk->hconfig, mbk->groupSize);
+	hashtableInit(NUM_BUCKETS, mbk, mbk->groupSize);
 	
 	
 	printf("@INFO: transferring config structs to GPU memory\n");
-	cudaMalloc((void**) &(mbk->dpconfig), sizeof(pagingConfig_t));
-	cudaMemcpy(mbk->dpconfig, mbk->pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
-
-	cudaMalloc((void**) &(mbk->dhconfig), sizeof(hashtableConfig_t));
-	cudaMemcpy(mbk->dhconfig, mbk->hconfig, sizeof(hashtableConfig_t), cudaMemcpyHostToDevice);
 
 	cudaMalloc((void**) &(mbk->dstates), mbk->numRecords * sizeof(char));
 	cudaMemset(mbk->dstates, 0, mbk->numRecords * sizeof(char));
@@ -282,15 +274,13 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	return mbk;
 }
 
-bool checkAndResetPass(multipassConfig_t* mbk)
+bool checkAndResetPass(multipassConfig_t* mbk, multipassConfig_t* dmbk)
 {
+	cudaMemcpy(mbk, dmbk, sizeof(multipassConfig_t), cudaMemcpyDeviceToHost);
 	bool failedFlag = false;
 	int* hostCompleteFlag = mbk->hostCompleteFlag;
 	int* gpuFlags = mbk->gpuFlags;
 	bool* dfailedFlag = mbk->dfailedFlag;
-	pagingConfig_t* pconfig = mbk->pconfig;
-	pagingConfig_t* dpconfig = mbk->dpconfig;
-	hashtableConfig_t* dhconfig = mbk->dhconfig;
 	int* dmyNumbers = mbk->dmyNumbers;
 	int* myNumbers = mbk->myNumbers;
 	int flagSize = mbk->flagSize;
@@ -320,26 +310,24 @@ bool checkAndResetPass(multipassConfig_t* mbk)
 	cudaMemcpy(&failedFlag, dfailedFlag, sizeof(bool), cudaMemcpyDeviceToHost);
 	cudaMemset(dfailedFlag, 0, sizeof(bool));
 
-	cudaMemcpy(pconfig, dpconfig, sizeof(pagingConfig_t), cudaMemcpyDeviceToHost);
 
-	cudaMemcpy((void*) pconfig->hashTableOffset, pconfig->dbuffer, pconfig->totalNumPages * PAGE_SIZE, cudaMemcpyDeviceToHost);
-	cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
+	cudaMemcpy((void*) mbk->hashTableOffset, mbk->dbuffer, mbk->totalNumPages * PAGE_SIZE, cudaMemcpyDeviceToHost);
+	cudaMemset(mbk->dbuffer, 0, mbk->totalNumPages * PAGE_SIZE);
 
-	printf("totalnoPage * pagesize: %llu, hhashtbufferSize: %llu\n", (largeInt) pconfig->totalNumPages * PAGE_SIZE, (largeInt) hhashTableBufferSize);
-	pconfig->hashTableOffset += pconfig->totalNumPages * PAGE_SIZE;
-	if((pconfig->hashTableOffset + pconfig->totalNumPages * PAGE_SIZE) > ((largeInt) hhashTableBaseAddr + hhashTableBufferSize) && failedFlag)
+	printf("totalnoPage * pagesize: %llu, hhashtbufferSize: %llu\n", (largeInt) mbk->totalNumPages * PAGE_SIZE, (largeInt) hhashTableBufferSize);
+	mbk->hashTableOffset += mbk->totalNumPages * PAGE_SIZE;
+	if((mbk->hashTableOffset + mbk->totalNumPages * PAGE_SIZE) > ((largeInt) hhashTableBaseAddr + hhashTableBufferSize) && failedFlag)
 	{
 		printf("Need more space on CPU memory for the hash table. Aborting...\n");
 		exit(1);
 	}
-	cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
-	pconfig->initialPageAssignedCounter = 0;
+	cudaMemcpy(mbk->pages, mbk->hpages, mbk->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
+	mbk->initialPageAssignedCounter = 0;
 
-	cudaMemcpy(dpconfig, pconfig, sizeof(pagingConfig_t), cudaMemcpyHostToDevice);
 
 	printf("Before calling setGroupPointer, number of grids: %d\n", ((NUM_BUCKETS) + 1023) / 1024);
-	setGroupsPointersDead<<<(((NUM_BUCKETS) + 1023) / 1024), 1024>>>(dhconfig, NUM_BUCKETS);
-	//setGroupsPointersDead<<<(((NUM_BUCKETS) + 256) / 255), 256>>>(hconfig->groups, NUM_BUCKETS, GROUP_SIZE);
+	setGroupsPointersDead<<<(((NUM_BUCKETS) + 1023) / 1024), 1024>>>(dmbk, NUM_BUCKETS);
+	//setGroupsPointersDead<<<(((NUM_BUCKETS) + 256) / 255), 256>>>(mbk->groups, NUM_BUCKETS, GROUP_SIZE);
 	cudaThreadSynchronize();
 
 	cudaError_t errR = cudaGetLastError();
@@ -358,6 +346,8 @@ bool checkAndResetPass(multipassConfig_t* mbk)
 
 	printf("Total success: %lld\n", totalSuccess);
 	printf("Total failure: %lld\n", totalFailed);
+
+	cudaMemcpy(dmbk, mbk, sizeof(multipassConfig_t), cudaMemcpyHostToDevice);
 
 	return failedFlag;
 }

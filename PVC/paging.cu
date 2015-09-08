@@ -1,28 +1,28 @@
 #include "hashGlobal.h"
 
-void initPaging(largeInt availableGPUMemory, pagingConfig_t* pconfig)
+void initPaging(largeInt availableGPUMemory, multipassConfig_t* mbk)
 {
 
-	pconfig->totalNumPages = availableGPUMemory / PAGE_SIZE;
-	printf("@INFO: total number of pages: %d [each %dKB]\n", pconfig->totalNumPages, (PAGE_SIZE / (1 << 10)));
-	pconfig->initialPageAssignedCounter = 0;
-	pconfig->initialPageAssignedCap = pconfig->totalNumPages;
+	mbk->totalNumPages = availableGPUMemory / PAGE_SIZE;
+	printf("@INFO: total number of pages: %d [each %dKB]\n", mbk->totalNumPages, (PAGE_SIZE / (1 << 10)));
+	mbk->initialPageAssignedCounter = 0;
+	mbk->initialPageAssignedCap = mbk->totalNumPages;
 
-	cudaMalloc((void**) &(pconfig->dbuffer), pconfig->totalNumPages * PAGE_SIZE);
-	cudaMemset(pconfig->dbuffer, 0, pconfig->totalNumPages * PAGE_SIZE);
+	cudaMalloc((void**) &(mbk->dbuffer), mbk->totalNumPages * PAGE_SIZE);
+	cudaMemset(mbk->dbuffer, 0, mbk->totalNumPages * PAGE_SIZE);
 	printf("@INFO: done allocating base buffer in GPU memory\n");
 
 	//This has to be allocated GPU-side
-	pconfig->hpages = (page_t*) malloc(pconfig->totalNumPages * sizeof(page_t));
-	for(int i = 0; i < pconfig->totalNumPages; i ++)
+	mbk->hpages = (page_t*) malloc(mbk->totalNumPages * sizeof(page_t));
+	for(int i = 0; i < mbk->totalNumPages; i ++)
 	{
-		pconfig->hpages[i].id = i;
-		pconfig->hpages[i].next = NULL;
-		pconfig->hpages[i].used = 0;
+		mbk->hpages[i].id = i;
+		mbk->hpages[i].next = NULL;
+		mbk->hpages[i].used = 0;
 	}
 	printf("@INFO: done initializing pages meta data\n");
-	cudaMalloc((void**) &(pconfig->pages), pconfig->totalNumPages * sizeof(page_t));
-	cudaMemcpy(pconfig->pages, pconfig->hpages, pconfig->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
+	cudaMalloc((void**) &(mbk->pages), mbk->totalNumPages * sizeof(page_t));
+	cudaMemcpy(mbk->pages, mbk->hpages, mbk->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
 
 	printf("@INFO: done doing initPaging\n");
 }
@@ -30,7 +30,7 @@ void initPaging(largeInt availableGPUMemory, pagingConfig_t* pconfig)
 
 
 //TODO: currently we don't mark a bucket group to not ask for more memory if it previously revoked its pages
-__device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingConfig_t* pconfig, int groupNo)
+__device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, multipassConfig_t* mbk, int groupNo)
 {
 	page_t* parentPage = myGroup->parentPage;
 
@@ -40,7 +40,7 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 		oldUsed = atomicAdd(&(parentPage->used), size);
 		if((oldUsed + size) < PAGE_SIZE)
 		{
-			return (void*) ((largeInt) pconfig->dbuffer + parentPage->id * PAGE_SIZE + oldUsed);
+			return (void*) ((largeInt) mbk->dbuffer + parentPage->id * PAGE_SIZE + oldUsed);
 		}
 	}
 
@@ -62,11 +62,11 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 				{
 					//Unlocking
 					atomicExch(&(myGroup->pageLock), 0);
-					return (void*) ((largeInt) pconfig->dbuffer + parentPage->id * PAGE_SIZE + oldUsed);
+					return (void*) ((largeInt) mbk->dbuffer + parentPage->id * PAGE_SIZE + oldUsed);
 				}
 			}
 			
-			newPage = allocateNewPage(pconfig, groupNo);
+			newPage = allocateNewPage(mbk, groupNo);
 
 			//If no more page exists and no page is used yet (for this bucketgroup), don't do anything
 			if(newPage == NULL)
@@ -89,19 +89,19 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, pagingCo
 	oldUsed = atomicAdd(&(newPage->used), size);
 
 	if((oldUsed + size) < PAGE_SIZE)
-		return (void*) ((largeInt) pconfig->dbuffer + oldUsed + newPage->id * PAGE_SIZE);
+		return (void*) ((largeInt) mbk->dbuffer + oldUsed + newPage->id * PAGE_SIZE);
 	else
 	{
 		return NULL;
 	}
 }
 
-__device__ page_t* allocateNewPage(pagingConfig_t* pconfig, int groupNo)
+__device__ page_t* allocateNewPage(multipassConfig_t* mbk, int groupNo)
 {
-	int pageIdToAllocate = atomicInc((unsigned*) &(pconfig->initialPageAssignedCounter), INT_MAX);
-	if(pageIdToAllocate < pconfig->totalNumPages)
+	int pageIdToAllocate = atomicInc((unsigned*) &(mbk->initialPageAssignedCounter), INT_MAX);
+	if(pageIdToAllocate < mbk->totalNumPages)
 	{
-		return &(pconfig->pages[pageIdToAllocate]);
+		return &(mbk->pages[pageIdToAllocate]);
 	}
 	return NULL;
 }
