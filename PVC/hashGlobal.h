@@ -9,8 +9,8 @@
 
 #define PAGE_SIZE (1 << 18)
 #define NUM_BUCKETS 10000000
-#define GROUP_SIZE 12000
 #define ALIGNMET 8
+#define MAX_NO_PASSES 4
 
 #define HOST_BUFFER_SIZE (1 << 31)
 

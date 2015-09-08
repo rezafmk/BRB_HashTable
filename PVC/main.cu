@@ -642,7 +642,7 @@ int main(int argc, char** argv)
 	cudaStreamCreate(&copyStream);
 	
 	//============ initializing the hash table and page table ==================//
-	int pagePerGroup = 4;
+	int pagePerGroup = 25;
 	multipassConfig_t* mbk = initMultipassBookkeeping(	(int*) hostCompleteFlag, 
 								gpuFlags, 
 								flagSize,
