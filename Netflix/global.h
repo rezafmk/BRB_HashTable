@@ -41,7 +41,7 @@
 #define WORDSIZELIMIT 16
 
 //================ Data assembly fine tuning definitions =======================//
-#define COPYSIZE 16
+#define COPYSIZE 8
 #define COPYTHREADS 4
 #define COALESCEITEMSIZE COPYSIZE
 //=============================================================================//
@@ -49,7 +49,7 @@
 
 typedef long long unsigned int ptr_t;
 typedef long long int largeInt;
-typedef uint4 copytype_t;
+typedef long long int copytype_t;
 
 extern __shared__ char sbuf[];
 

@@ -13,6 +13,7 @@
 #define MAXREAD 2040109465
 
 #define EPOCHCHUNK 30
+#define DISPLAY_RESULTS
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 __device__ inline int myAtoi(char* p)
@@ -242,15 +243,12 @@ __global__ void netflixKernelMultipass(
 			{
 				//TODO: since the hash table lib is ours, we can read the data in it coalescly.
 				char record[56];
-				int urlSize = 0;
 				for(int k = 0; k < RECORD_SIZE; k ++)
 				{
 					if(states[i] == (char) 0)
 					{
 						char c = (textData + (s * iterations * RECORD_SIZE * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
 						record[k] = c;
-						if(c != ' ' && c != '\n')
-							urlSize ++;
 					}
 					//sum += (int) c;
 
@@ -270,8 +268,6 @@ __global__ void netflixKernelMultipass(
 					int rateA = getUserARate(record);
 					int rateB = getUserBRate(record);
 
-					if(threadIdx.x == 512 && blockIdx.x == 0)
-						printf("idA: %d idB: %d\n", key.userAId, key.userBId);
 
 					largeInt localScore = 0;
 					if(rateA == rateB)
@@ -861,13 +857,11 @@ int main(int argc, char** argv)
 
 		while(bucket != NULL)
 		{
-			userIds* ids = (char*) getKey(bucket);
+			userIds* ids = (userIds*) getKey(bucket);
 
 			for(int k = 0; k < tabCount; k ++)
 				printf("\t");
-			printf("IDs: ");
-			for(int m = 0; m < bucket->keySize; m ++)
-				printf("%d and %d", ids->userAId, ids->userBId);
+			printf("IDs: %d and %d", ids->userAId, ids->userBId);
 
 			int* value = (int*) getValue(bucket);
 			printf(": %d\n", *value);
