@@ -345,8 +345,8 @@ void endGlobalTimer(int tid, char* message)
 	ms = end.tv_usec - global_start[tid].tv_usec;
 	diff = sec * 1000000 + ms;
 
-	printf("[%d] %10s:\t\t%0.1fms\n", tid, message, (double)((double)diff/1000.0));
-	fflush(stdout);
+	//printf("[%d] %10s:\t\t%0.1fms\n", tid, message, (double)((double)diff/1000.0));
+	//fflush(stdout);
 }
 
 void* copyMethodPattern(void* arg)
@@ -850,27 +850,58 @@ int main(int argc, char** argv)
 	
 
 #ifdef DISPLAY_RESULTS
+	int topScores[10];
+	int topScoreIds[10];
+	int topScoreTab[10];
+	memset(topScores, 0, 10 * sizeof(int));
+	memset(topScoreIds, 0, 10 * sizeof(int));
+	memset(topScoreTab, 0, 10 * sizeof(int));
+
 	int tabCount = 0;
-	for(int i = 0; i < 100; i ++)
+	for(int i = 0; i < NUM_BUCKETS; i ++)
 	{
 		hashBucket_t* bucket = buckets[i];
 
 		while(bucket != NULL)
 		{
 			userIds* ids = (userIds*) getKey(bucket);
-
-			for(int k = 0; k < tabCount; k ++)
-				printf("\t");
-			printf("IDs: %d and %d", ids->userAId, ids->userBId);
-
 			int* value = (int*) getValue(bucket);
-			printf(": %d\n", *value);
+			for(int j = 0; j < 10; j ++)
+			{
+				if(*value > topScores[j])
+				{
+					for(int m = 9; m >= j && m > 0; m --)
+					{
+						topScores[m] = topScores[m - 1]; //what if m is 0?
+						topScoreIds[m] = topScoreIds[m - 1];
+						topScoreTab[m] = topScoreTab[m - 1];
+					}
+					topScores[j] = *value;
+					topScoreIds[j] = i;
+					topScoreTab[j] = tabCount;
+					break;
+				}
+			}
+			
+
+
 			bucket = bucket->next;
 
 			tabCount ++;
 		}
 		tabCount = 0;
 
+	}
+	printf("Top 10 scores:\n");
+	for(int i = 0; i < 10; i ++)
+	{
+		hashBucket_t* bucket = buckets[topScoreIds[i]];
+		for(int j = 0; j < topScoreTab[i]; j ++)
+			bucket = bucket->next;
+
+		userIds* ids = (userIds*) getKey(bucket);
+		int* value = (int*) getValue(bucket);
+		printf("IDs: %d and %d: %d\n", ids->userAId, ids->userBId, *value);
 	}
 #endif
 
