@@ -20,8 +20,6 @@ __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
 {
 	userIds* ids = (userIds*) str;
 	unsigned hash = ids->userAId * ids->numUsers + ids->userBId;
-	//if(threadIdx.x == 512 && blockIdx.x == 0)
-		//printf("minId: %d, maxId: %d, numUsers: %d\n", minId, maxId, (int) ids->numUsers);
 
         return hash % numBuckets;
 }
