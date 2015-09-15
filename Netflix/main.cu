@@ -14,6 +14,7 @@
 
 #define EPOCHCHUNK 30
 #define DISPLAY_RESULTS
+#define NUM_RESULTS_TO_SHOW 20
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 __device__ inline int myAtoi(char* p)
@@ -264,6 +265,12 @@ __global__ void netflixKernelMultipass(
 					key.userAId = getUserAID(record);
 					key.userBId = getUserBID(record);
 					key.numUsers = numUsers;
+					if(key.userBId > key.userAId)
+					{
+						int swap = key.userBId;
+						key.userBId = key.userAId;
+						key.userAId = swap;
+					}
 
 					int rateA = getUserARate(record);
 					int rateB = getUserBRate(record);
@@ -850,12 +857,12 @@ int main(int argc, char** argv)
 	
 
 #ifdef DISPLAY_RESULTS
-	int topScores[10];
-	int topScoreIds[10];
-	int topScoreTab[10];
-	memset(topScores, 0, 10 * sizeof(int));
-	memset(topScoreIds, 0, 10 * sizeof(int));
-	memset(topScoreTab, 0, 10 * sizeof(int));
+	int topScores[NUM_RESULTS_TO_SHOW];
+	int topScoreIds[NUM_RESULTS_TO_SHOW];
+	int topScoreTab[NUM_RESULTS_TO_SHOW];
+	memset(topScores, 0, NUM_RESULTS_TO_SHOW * sizeof(int));
+	memset(topScoreIds, 0, NUM_RESULTS_TO_SHOW * sizeof(int));
+	memset(topScoreTab, 0, NUM_RESULTS_TO_SHOW * sizeof(int));
 
 	int tabCount = 0;
 	for(int i = 0; i < NUM_BUCKETS; i ++)
@@ -866,11 +873,11 @@ int main(int argc, char** argv)
 		{
 			userIds* ids = (userIds*) getKey(bucket);
 			int* value = (int*) getValue(bucket);
-			for(int j = 0; j < 10; j ++)
+			for(int j = 0; j < NUM_RESULTS_TO_SHOW; j ++)
 			{
 				if(*value > topScores[j])
 				{
-					for(int m = 9; m >= j && m > 0; m --)
+					for(int m = (NUM_RESULTS_TO_SHOW - 1); m >= j && m > 0; m --)
 					{
 						topScores[m] = topScores[m - 1]; //what if m is 0?
 						topScoreIds[m] = topScoreIds[m - 1];
@@ -892,8 +899,8 @@ int main(int argc, char** argv)
 		tabCount = 0;
 
 	}
-	printf("Top 10 scores:\n");
-	for(int i = 0; i < 10; i ++)
+	printf("Top %d scores:\n", NUM_RESULTS_TO_SHOW);
+	for(int i = 0; i < NUM_RESULTS_TO_SHOW; i ++)
 	{
 		hashBucket_t* bucket = buckets[topScoreIds[i]];
 		for(int j = 0; j < topScoreTab[i]; j ++)

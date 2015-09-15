@@ -19,18 +19,7 @@ void hashtableInit(unsigned numBuckets, multipassConfig_t* mbk, unsigned groupSi
 __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
 {
 	userIds* ids = (userIds*) str;
-	int minId, maxId;
-	if(ids->userAId < ids->userBId)
-	{
-		minId = ids->userAId;
-		maxId = ids->userBId;
-	}
-	else
-	{
-		minId = ids->userBId;
-		maxId = ids->userAId;
-	}
-	unsigned hash = minId * ids->numUsers + maxId;
+	unsigned hash = ids->userAId * ids->numUsers + ids->userBId;
 	//if(threadIdx.x == 512 && blockIdx.x == 0)
 		//printf("minId: %d, maxId: %d, numUsers: %d\n", minId, maxId, (int) ids->numUsers);
 
@@ -40,7 +29,7 @@ __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
 
 __device__ void resolveSameKeyAddition(void const* key, void* value, void* oldValue)
 {
-	*((int*) oldValue) += 1;
+	*((int*) oldValue) += *((int*) value);
 }
 
 __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize, multipassConfig_t* mbk)
