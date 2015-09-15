@@ -71,21 +71,25 @@ int myAtoi(char* p)
 }
 int getUserAID(char* record)
 {
-	return myAtoi(&record[USERAIDLOCATION]);
+	//return myAtoi(&record[USERAIDLOCATION]);
+	return atoi(&record[USERAIDLOCATION]);
 }
 
 int getUserBID(char* record)
 {
-	return myAtoi(&record[USERBIDLOCATION]);
+	//return myAtoi(&record[USERBIDLOCATION]);
+	return atoi(&record[USERBIDLOCATION]);
 }
 
 int getUserARate(char* record)
 {
-	return myAtoi(&record[USERARATELOCATION]);
+	//return myAtoi(&record[USERARATELOCATION]);
+	return atoi(&record[USERARATELOCATION]);
 }
 int getUserBRate(char* record)
 {
-	return myAtoi(&record[USERBRATELOCATION]);
+	//return myAtoi(&record[USERBRATELOCATION]);
+	return atoi(&record[USERBRATELOCATION]);
 }
 
 
@@ -196,7 +200,7 @@ void* kernel(void* arg)//char* records, int numRecords, int* recordSizes, int nu
 	int end = start + chunkSize;
 	end --;
 
-	printf("Thread %d started\n", index);
+	printf("Thread %d started numUsers: %d\n", index, numUsers);
 	
 	for(unsigned i = start; i < end; i += 1)
 	{
@@ -332,7 +336,7 @@ int main(int argc, char** argv)
 		argument[i].status = status;
 		argument[i].index = i;
 		argument[i].numThreads = NUMTHREADS;
-		argument[i].numUsers = NUMTHREADS;
+		argument[i].numUsers = numUsers;
 
 		pthread_create(&thread[i], NULL, kernel, &argument[i]);
 	}
@@ -419,6 +423,37 @@ int main(int argc, char** argv)
 		printf("IDs: %d and %d: %d\n", ids->userAId, ids->userBId, *value);
 	}
 #endif
+
+	int totalDepth = 0;
+	int totalValidBuckets = 0;
+	int totalEmpty = 0;
+	int maximumDepth = 0;
+	for(int i = 0; i < NUM_BUCKETS; i ++)
+	{
+		hashEntry_t* bucket = hashTable[i].entry;
+		if(bucket == NULL)
+			totalEmpty ++;
+		else
+			totalValidBuckets ++;
+
+		int localMaxDepth = 0;
+		while(bucket != NULL)
+		{
+			totalDepth ++;
+			localMaxDepth ++;
+			bucket = bucket->next;
+		}
+		if(localMaxDepth > maximumDepth)
+			maximumDepth = localMaxDepth;
+	}
+
+	float emptyPercentage = ((float) totalEmpty / (float) NUM_BUCKETS) * (float) 100;
+	float averageDepth = (float) totalDepth / (float) totalValidBuckets;
+	printf("Empty percentage: %0.1f\n", emptyPercentage);
+	printf("Average depth: %0.1f\n", averageDepth);
+	printf("Max depth: %d\n", maximumDepth);
+
+
 
 	return 0;
 }
