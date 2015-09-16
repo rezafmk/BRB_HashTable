@@ -4,11 +4,11 @@
 
 #define GB 1073741824
 
-#define RECORD_SIZE 56
-#define USERAIDLOCATION 0
-#define USERBIDLOCATION 6
-#define USERARATELOCATION 12
-#define USERBRATELOCATION 14
+#define RECORD_SIZE 64
+#define USERAIDLOCATION 6
+#define USERBIDLOCATION 35
+#define USERARATELOCATION 33
+#define USERBRATELOCATION 62
 
 #define MAXREAD 2040109465
 
@@ -243,7 +243,7 @@ __global__ void netflixKernelMultipass(
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
 				//TODO: since the hash table lib is ours, we can read the data in it coalescly.
-				char record[56];
+				char record[RECORD_SIZE];
 				for(int k = 0; k < RECORD_SIZE; k ++)
 				{
 					if(states[i] == (char) 0)
@@ -583,7 +583,7 @@ int main(int argc, char** argv)
 
         fname = argv[1];
 
-	int numUsers = 15000;
+	int numUsers = 31000;
         fd = open(fname, O_RDONLY);
         fstat(fd, &finfo);
 
