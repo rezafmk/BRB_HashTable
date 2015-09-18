@@ -24,13 +24,7 @@
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 
-typedef struct
-{
-	bool lunique;
-	bool runique;
-	char lextension;
-	char rextension;
-} value_t;
+
 
 
 __global__ void dnaAssemblyKernelMultipass(
@@ -110,8 +104,7 @@ __global__ void dnaAssemblyKernelMultipass(
 			int loopCounter = 0;
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
-				//ptr_t addr = (ptr_t) &data[i * RECORD_SIZE + READLOCATION];
-				ptr_t addr = (ptr_t) &data[i * RECORD_SIZE];
+				ptr_t addr = (ptr_t) &data[i * RECORD_SIZE + READLOCATION];
 				if(addrCounterSpace1 < PATTERNSIZE)
 					addrDis1[(threadIdx.x % BLOCKSIZE) * PATTERNSIZE + addrCounterSpace1] = (int) (addr - previousAddrSpace1);
 
@@ -135,8 +128,7 @@ __global__ void dnaAssemblyKernelMultipass(
 			loopCounter = 0;
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
-				//ptr_t addr = (ptr_t) &data[i * RECORD_SIZE + READLOCATION];
-				ptr_t addr = (ptr_t) &data[i * RECORD_SIZE];
+				ptr_t addr = (ptr_t) &data[i * RECORD_SIZE + READLOCATION];
 				dataCountSpace1 ++;
 				if(addr != previousAddrSpace1)
 					validated = false;
@@ -185,8 +177,7 @@ __global__ void dnaAssemblyKernelMultipass(
 				loopCounter = 0;
 				for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 				{
-					//(textAddrs + (s * (iterations * (blockDim.x / 2) * gridDim.x)))[genericCounter] = (ptr_t) &data[i * RECORD_SIZE + READLOCATION];
-					(textAddrs + (s * (iterations * (blockDim.x / 2) * gridDim.x)))[genericCounter] = (ptr_t) &data[i * RECORD_SIZE];
+					(textAddrs + (s * (iterations * (blockDim.x / 2) * gridDim.x)))[genericCounter] = (ptr_t) &data[i * RECORD_SIZE + READLOCATION];
 					genericCounter += 32;
 				}
 			}
@@ -225,47 +216,41 @@ __global__ void dnaAssemblyKernelMultipass(
 
 		if(!prediction && j > 1)
 		{
-			//genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * READSIZE_ALIGNED + (threadIdx.x % 32) * COPYSIZE;
-			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * RECORD_SIZE_ALIGNED + (threadIdx.x % 32) * COPYSIZE;
+			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * READSIZE_ALIGNED + (threadIdx.x % 32) * COPYSIZE;
 			int step = 0;
 
 			int loopCounter = 0;
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
 				//TODO: since the hash table lib is ours, we can read the data in it coalescly.
-				//char record[READSIZE_ALIGNED];
-				char record[RECORD_SIZE_ALIGNED];
-				for(int k = 0; k < RECORD_SIZE_ALIGNED; k ++)
+				char record[READSIZE_ALIGNED];
+				value_t value;
+				for(int k = 0; k < READSIZE_ALIGNED; k ++)
 				{
 					if(states[i] == (char) 0)
 					{
-						//char c = (textData + (s * iterations * READSIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
-						char c = (textData + (s * iterations * RECORD_SIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
-						record[k] = c;
-						if(threadIdx.x == 518 && blockIdx.x == 0)
-							printf("%c", c);
+						char c = (textData + (s * iterations * READSIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
+						if(k == 0)
+							value.lextension = c;
+						else if( k == (READSIZE - 1))
+							value.rextension = c;
+						else
+							record[k - 1] = c;
 					}
-					//sum += (int) c;
 
 					step ++;
 					genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
 					step %= COALESCEITEMSIZE;
 				}
 
-				if(threadIdx.x == 518 && blockIdx.x == 0)
-					printf("\n-------------------------------------------\n");
-
 				if(states[i] == (char) 0)
 				{
 
-					value_t value;
-					value.rextension = record[READSIZE - 1];
-					value.lextension = record[0];
 					value.runique = true;
 					value.lunique = true;
-#if 0
+#if 1
 					
-					if(addToHashtable((void*) &(record[1]), (READSIZE - 2), (void*) &value, sizeof(value_t), mbk) == true)
+					if(addToHashtable((void*) &(record[0]), (READSIZE - 2), (void*) &value, sizeof(value_t), mbk) == true)
 					{
 						myNumbers[index * 2] ++;
 						states[i] = SUCCEED;
@@ -280,10 +265,6 @@ __global__ void dnaAssemblyKernelMultipass(
 				}
 					
 			}
-
-				if(threadIdx.x == 518 && blockIdx.x == 0)
-					printf("=================================\n");
-				
 
 			s = (s + 1) % 3;
 		}
@@ -377,29 +358,17 @@ void* copyMethodPattern(void* arg)
 			curAddrs = warpFirstLastAddrs[i].firstAddr;
 
 			//1
-			//offset = ((myBlock * BLOCKSIZE + k * WARPSIZE) * epochDuration) * READSIZE_ALIGNED + i * COPYSIZE;
-			offset = ((myBlock * BLOCKSIZE + k * WARPSIZE) * epochDuration) * RECORD_SIZE_ALIGNED + i * COPYSIZE;
+			offset = ((myBlock * BLOCKSIZE + k * WARPSIZE) * epochDuration) * READSIZE_ALIGNED + i * COPYSIZE;
 
 			copytype_t* tempSpace = (copytype_t*) &hostBuffer[0][offset];
 
 			//TODO this has to use strides to know what address to load next.
 			for(int j = 0; j < warpFirstLastAddrs[i].itemCount; j ++)
 			{
-				//for(int m = 0; m < READSIZE_ALIGNED / COPYSIZE; m ++)
-				for(int m = 0; m < RECORD_SIZE_ALIGNED / COPYSIZE; m ++)
+				for(int m = 0; m < READSIZE_ALIGNED / COPYSIZE; m ++)
 				{
-					//tempSpace[(j * (READSIZE_ALIGNED / COPYSIZE) + m) * WARPSIZE] = *((copytype_t*) &fdata[(curAddrs + j * RECORD_SIZE + m * COPYSIZE)]);
-					tempSpace[(j * (RECORD_SIZE_ALIGNED / COPYSIZE) + m) * WARPSIZE] = *((copytype_t*) &fdata[(curAddrs + j * RECORD_SIZE + m * COPYSIZE)]);
-#if 0
-					if(myBlock == 0 && k == 0 && i == 0)
-					{
-						for(int p = 0; p < COPYSIZE; p ++)
-							printf("%c", fdata[curAddrs + j * RECORD_SIZE + m * COPYSIZE + p]);
-					}
-#endif
+					tempSpace[(j * (READSIZE_ALIGNED / COPYSIZE) + m) * WARPSIZE] = *((copytype_t*) &fdata[(curAddrs + j * RECORD_SIZE + m * COPYSIZE)]);
 				}
-				//if(myBlock == 0 && k == 0 && i == 0)
-					//printf("\n");
 			}
 
 		}
@@ -659,7 +628,7 @@ int main(int argc, char** argv)
 	//============================================//	
 
 	//========= URLHostBuffer ===========//
-	int textHostBufferSize = RECORD_SIZE_ALIGNED * iterations * numThreads * 3;
+	int textHostBufferSize = READSIZE_ALIGNED * iterations * numThreads * 3;
 	char* tempTextHostBuffer;
 	tempTextHostBuffer = (char*) malloc(textHostBufferSize + MEMORY_ALIGNMENT);
 	char* hostTextHostBuffer;
@@ -708,7 +677,7 @@ int main(int argc, char** argv)
 	//============================================//
 
 	char* textData;
-	cudaMalloc((void**) &textData, RECORD_SIZE_ALIGNED * iterations * numThreads * 3);
+	cudaMalloc((void**) &textData, READSIZE_ALIGNED * iterations * numThreads * 3);
 
 	char* phony = (char*) 0x0;
 	cudaStream_t execStream;
@@ -781,14 +750,14 @@ int main(int argc, char** argv)
 			argument[m]->threadBlockSize = BLOCKSIZE;
 			argument[m]->textItems = iterations;
 			argument[m]->textHostBuffer[0] = hostTextHostBuffer;
-			argument[m]->textHostBuffer[1] = hostTextHostBuffer + iterations * numThreads * RECORD_SIZE_ALIGNED;
-			argument[m]->textHostBuffer[2] = hostTextHostBuffer + iterations * numThreads * RECORD_SIZE_ALIGNED * 2;
+			argument[m]->textHostBuffer[1] = hostTextHostBuffer + iterations * numThreads * READSIZE_ALIGNED;
+			argument[m]->textHostBuffer[2] = hostTextHostBuffer + iterations * numThreads * READSIZE_ALIGNED * 2;
 			argument[m]->textAddrs[0] = hostTextAddrHostBuffer;
 			argument[m]->textAddrs[1] = hostTextAddrHostBuffer + iterations * numThreads;
 			argument[m]->textAddrs[2] = hostTextAddrHostBuffer +  iterations * numThreads * 2;
 			argument[m]->textData[0] = textData;
-			argument[m]->textData[1] = textData + iterations * numThreads * RECORD_SIZE_ALIGNED;
-			argument[m]->textData[2] = textData +  iterations * numThreads * RECORD_SIZE_ALIGNED * 2;
+			argument[m]->textData[1] = textData + iterations * numThreads * READSIZE_ALIGNED;
+			argument[m]->textData[2] = textData +  iterations * numThreads * READSIZE_ALIGNED * 2;
 			argument[m]->stridesSpace1[0] = hostStridesSpace1;
 			argument[m]->stridesSpace1[1] = hostStridesSpace1 + numThreads;
 			argument[m]->stridesSpace1[2] = hostStridesSpace1 + numThreads * 2;
@@ -796,7 +765,7 @@ int main(int argc, char** argv)
 			argument[m]->firstLastAddrsSpace1[0] = hostFirstLastSpace1;
 			argument[m]->firstLastAddrsSpace1[1] = hostFirstLastSpace1 + numThreads;
 			argument[m]->firstLastAddrsSpace1[2] = hostFirstLastSpace1 + numThreads * 2;
-			argument[m]->textItemSize = RECORD_SIZE_ALIGNED;
+			argument[m]->textItemSize = READSIZE_ALIGNED;
 			argument[m]->sourceSpaceSize1 = fileSize;
 
 			pthread_create(&threads[m], NULL, pipelineData, (void*) argument[m]);

@@ -16,18 +16,114 @@ void hashtableInit(unsigned numBuckets, multipassConfig_t* mbk, unsigned groupSi
 	cudaMemset(mbk->isNextDeads, 0, numBuckets * sizeof(short));
 }
 
+
 __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
 {
-	userIds* ids = (userIds*) str;
-	unsigned hash = ids->userAId * ids->numUsers + ids->userBId;
 
-        return hash % numBuckets;
+	int numOuterLoopIterations = len / 16;
+	if(len % 16 != 0)
+		numOuterLoopIterations ++;
+	
+	unsigned finalValue = 0;
+
+	for(int j = 0; j < numOuterLoopIterations; j ++)
+	{
+		unsigned hashValue = 0;
+		int startLen = 16 * j;
+		int endLen = startLen + 16;
+		endLen = (endLen < len)? endLen : len;
+
+		char temp[4];
+		temp[0] = (char) 0;
+		temp[1] = (char) 0;
+		temp[2] = (char) 0;
+		temp[3] = (char) 0;
+
+		for(int i = startLen; i < endLen; i ++)
+		{
+			int charCounter = (i % 16) / 4;
+
+			if(charCounter == 0)
+				charCounter = 3;
+			else if(charCounter == 1)
+				charCounter = 2;
+			else if(charCounter == 2)
+				charCounter = 1;
+			else if(charCounter == 3)
+				charCounter = 0;
+
+			if(i % 4 == 0)
+			{
+				if(str[i] == 'C')
+					temp[charCounter] = temp[charCounter] | (1 << 6);
+				else if(str[i] == 'G')
+					temp[charCounter] = temp[charCounter] | (1 << 7);
+				else if(str[i] == 'T')
+				{
+					temp[charCounter] = temp[charCounter] | (1 << 7);
+					temp[charCounter] = temp[charCounter] | (1 << 6);
+				}
+
+			}
+			else if(i % 4 == 1)
+			{
+				if(str[i] == 'C')
+					temp[charCounter] = temp[charCounter] | (1 << 4);
+				else if(str[i] == 'G')
+					temp[charCounter] = temp[charCounter] | (1 << 5);
+				else if(str[i] == 'T')
+				{
+					temp[charCounter] = temp[charCounter] | (1 << 5);
+					temp[charCounter] = temp[charCounter] | (1 << 4);
+				}
+
+			}
+			else if(i % 4 == 2)
+			{
+				if(str[i] == 'C')
+					temp[charCounter] = temp[charCounter] | (1 << 2);
+				else if(str[i] == 'G')
+					temp[charCounter] = temp[charCounter] | (1 << 3);
+				else if(str[i] == 'T')
+				{
+					temp[charCounter] = temp[charCounter] | (1 << 3);
+					temp[charCounter] = temp[charCounter] | (1 << 2);
+				}
+
+
+			}
+			else
+			{
+				if(str[i] == 'C')
+					temp[charCounter] = temp[charCounter] | (1 << 0);
+				else if(str[i] == 'G')
+					temp[charCounter] = temp[charCounter] | (1 << 1);
+				else if(str[i] == 'T')
+				{
+					temp[charCounter] = temp[charCounter] | (1 << 1);
+					temp[charCounter] = temp[charCounter] | (1 << 0);
+				}
+
+			}
+		}
+
+		hashValue = *((unsigned int*) &temp[0]);
+		finalValue += hashValue;
+	}
+
+        return finalValue % numBuckets;
 }
 
 
 __device__ void resolveSameKeyAddition(void const* key, void* value, void* oldValue)
 {
-	*((int*) oldValue) += *((int*) value);
+	value_t* mainValue = (value_t*) oldValue;
+	value_t* newValue = (value_t*) value;
+	
+	if(mainValue->rextension != newValue->rextension)
+		mainValue->runique = false;
+	if(mainValue->lextension != newValue->lextension)
+		mainValue->lunique = false;
 }
 
 __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize, multipassConfig_t* mbk)

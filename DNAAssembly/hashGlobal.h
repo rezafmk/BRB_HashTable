@@ -24,11 +24,12 @@ typedef long long int largeInt;
 
 typedef struct
 {
-	largeInt numUsers;
-	int userAId;
-	int userBId;
-} userIds;
-
+	unsigned pad;
+	bool lunique;
+	bool runique;
+	char lextension;
+	char rextension;
+} value_t;
 
 
 //================ paging structures ================//
