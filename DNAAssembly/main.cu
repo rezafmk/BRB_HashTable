@@ -4,12 +4,11 @@
 
 #define GB 1073741824
 
-#define RECORD_SIZE 118
-#define RECORD_SIZE_ALIGNED 120
+#define RECORD_SIZE 128
+#define RECORD_SIZE_ALIGNED 128
 #define IDSIZE 31
-#define READSIZE 41
+#define READSIZE 48
 #define READSIZE_ALIGNED 48
-#define QSSIZE 41
 
 #define IDLOCATION 0
 #define READLOCATION 32
@@ -29,7 +28,7 @@
 
 __global__ void dnaAssemblyKernelMultipass(
 				char* data, 
-				int numRecords,
+				unsigned numRecords,
 				unsigned numUsers,
 				ptr_t* textAddrs,
 				char* textData,
@@ -75,11 +74,11 @@ __global__ void dnaAssemblyKernelMultipass(
 
 	ptr_t previousAddrSpace1;
 	ptr_t firstAddrSpace1;
-	int i = start;
+	unsigned i = start;
 
-	for(int j = 0; i < end; j ++)
+	for(unsigned j = 0; i < end; j ++)
 	{
-#if 1
+#if 0
 		if((prediction && j < epochNum && epochSuccessStatus[j] == (char) 1) || (!prediction && j > 1 && epochSuccessStatus[j - 2] == (char) 1))
 		{
 			i += iterations;
@@ -216,6 +215,7 @@ __global__ void dnaAssemblyKernelMultipass(
 
 		if(!prediction && j > 1)
 		{
+			//genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * READSIZE_ALIGNED + (threadIdx.x % 32) * COPYSIZE;
 			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * READSIZE_ALIGNED + (threadIdx.x % 32) * COPYSIZE;
 			int step = 0;
 
@@ -223,12 +223,15 @@ __global__ void dnaAssemblyKernelMultipass(
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
 				//TODO: since the hash table lib is ours, we can read the data in it coalescly.
+				//char record[READSIZE_ALIGNED];
 				char record[READSIZE_ALIGNED];
 				value_t value;
+				//for(int k = 0; k < READSIZE_ALIGNED; k ++)
 				for(int k = 0; k < READSIZE_ALIGNED; k ++)
 				{
 					if(states[i] == (char) 0)
 					{
+						//char c = (textData + (s * iterations * READSIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
 						char c = (textData + (s * iterations * READSIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
 						if(k == 0)
 							value.lextension = c;
@@ -236,12 +239,16 @@ __global__ void dnaAssemblyKernelMultipass(
 							value.rextension = c;
 						else
 							record[k - 1] = c;
+						//if(threadIdx.x == 512 && blockIdx.x == 0)
+							//printf("%c", c);
 					}
 
 					step ++;
 					genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
 					step %= COALESCEITEMSIZE;
 				}
+				//if(threadIdx.x == 512 && blockIdx.x == 0)
+					//printf("\n");
 
 				if(states[i] == (char) 0)
 				{
@@ -250,7 +257,8 @@ __global__ void dnaAssemblyKernelMultipass(
 					value.lunique = true;
 #if 1
 					
-					if(addToHashtable((void*) &(record[0]), (READSIZE - 2), (void*) &value, sizeof(value_t), mbk) == true)
+					//if(addToHashtable((void*) &(record[0]), (READSIZE - 2), (void*) &value, sizeof(value_t), mbk) == true)
+					if(addToHashtable((void*) &(record[0]), READSIZE, (void*) &value, sizeof(value_t), mbk) == true)
 					{
 						myNumbers[index * 2] ++;
 						states[i] = SUCCEED;
@@ -589,7 +597,7 @@ int main(int argc, char** argv)
 	dim3 grid(MAXBLOCKS, 1, 1);
 	int numThreads = BLOCKSIZE * grid.x * grid.y;
 
-	int numRecords = fileSize / RECORD_SIZE;
+	unsigned numRecords = fileSize / RECORD_SIZE;
 
 	//======================================================//
 	int chunkSize = EPOCHCHUNK * (1 << 20);
@@ -628,6 +636,7 @@ int main(int argc, char** argv)
 	//============================================//	
 
 	//========= URLHostBuffer ===========//
+	//int textHostBufferSize = READSIZE_ALIGNED * iterations * numThreads * 3;
 	int textHostBufferSize = READSIZE_ALIGNED * iterations * numThreads * 3;
 	char* tempTextHostBuffer;
 	tempTextHostBuffer = (char*) malloc(textHostBufferSize + MEMORY_ALIGNMENT);
@@ -677,6 +686,7 @@ int main(int argc, char** argv)
 	//============================================//
 
 	char* textData;
+	//cudaMalloc((void**) &textData, READSIZE_ALIGNED * iterations * numThreads * 3);
 	cudaMalloc((void**) &textData, READSIZE_ALIGNED * iterations * numThreads * 3);
 
 	char* phony = (char*) 0x0;
