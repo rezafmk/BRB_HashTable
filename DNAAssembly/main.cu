@@ -22,6 +22,7 @@
 #define NUM_RESULTS_TO_SHOW 20
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
+#define DISPLAY_RESULTS
 
 
 
@@ -215,7 +216,6 @@ __global__ void dnaAssemblyKernelMultipass(
 
 		if(!prediction && j > 1)
 		{
-			//genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * READSIZE_ALIGNED + (threadIdx.x % 32) * COPYSIZE;
 			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * READSIZE_ALIGNED + (threadIdx.x % 32) * COPYSIZE;
 			int step = 0;
 
@@ -223,15 +223,12 @@ __global__ void dnaAssemblyKernelMultipass(
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
 				//TODO: since the hash table lib is ours, we can read the data in it coalescly.
-				//char record[READSIZE_ALIGNED];
 				char record[READSIZE_ALIGNED];
 				value_t value;
-				//for(int k = 0; k < READSIZE_ALIGNED; k ++)
 				for(int k = 0; k < READSIZE_ALIGNED; k ++)
 				{
 					if(states[i] == (char) 0)
 					{
-						//char c = (textData + (s * iterations * READSIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
 						char c = (textData + (s * iterations * READSIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
 						if(k == 0)
 							value.lextension = c;
@@ -239,16 +236,12 @@ __global__ void dnaAssemblyKernelMultipass(
 							value.rextension = c;
 						else
 							record[k - 1] = c;
-						//if(threadIdx.x == 512 && blockIdx.x == 0)
-							//printf("%c", c);
 					}
 
 					step ++;
 					genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
 					step %= COALESCEITEMSIZE;
 				}
-				//if(threadIdx.x == 512 && blockIdx.x == 0)
-					//printf("\n");
 
 				if(states[i] == (char) 0)
 				{
@@ -257,7 +250,6 @@ __global__ void dnaAssemblyKernelMultipass(
 					value.lunique = true;
 #if 1
 					
-					//if(addToHashtable((void*) &(record[0]), (READSIZE - 2), (void*) &value, sizeof(value_t), mbk) == true)
 					if(addToHashtable((void*) &(record[0]), READSIZE, (void*) &value, sizeof(value_t), mbk) == true)
 					{
 						myNumbers[index * 2] ++;
@@ -636,7 +628,6 @@ int main(int argc, char** argv)
 	//============================================//	
 
 	//========= URLHostBuffer ===========//
-	//int textHostBufferSize = READSIZE_ALIGNED * iterations * numThreads * 3;
 	int textHostBufferSize = READSIZE_ALIGNED * iterations * numThreads * 3;
 	char* tempTextHostBuffer;
 	tempTextHostBuffer = (char*) malloc(textHostBufferSize + MEMORY_ALIGNMENT);
@@ -686,7 +677,6 @@ int main(int argc, char** argv)
 	//============================================//
 
 	char* textData;
-	//cudaMalloc((void**) &textData, READSIZE_ALIGNED * iterations * numThreads * 3);
 	cudaMalloc((void**) &textData, READSIZE_ALIGNED * iterations * numThreads * 3);
 
 	char* phony = (char*) 0x0;
@@ -841,32 +831,26 @@ int main(int argc, char** argv)
 	memset(topScoreTab, 0, NUM_RESULTS_TO_SHOW * sizeof(int));
 
 	int tabCount = 0;
-	for(int i = 0; i < NUM_BUCKETS; i ++)
+	for(int i = 0; i < 20; i ++)
 	{
 		hashBucket_t* bucket = buckets[i];
 
 		while(bucket != NULL)
 		{
-			userIds* ids = (userIds*) getKey(bucket);
-			int* value = (int*) getValue(bucket);
-			for(int j = 0; j < NUM_RESULTS_TO_SHOW; j ++)
-			{
-				if(*value > topScores[j])
-				{
-					for(int m = (NUM_RESULTS_TO_SHOW - 1); m >= j && m > 0; m --)
-					{
-						topScores[m] = topScores[m - 1]; //what if m is 0?
-						topScoreIds[m] = topScoreIds[m - 1];
-						topScoreTab[m] = topScoreTab[m - 1];
-					}
-					topScores[j] = *value;
-					topScoreIds[j] = i;
-					topScoreTab[j] = tabCount;
-					break;
-				}
-			}
+			char* dna = (char*) getKey(bucket);
+			value_t* value = (value_t*) getValue(bucket);
+			for(int j = 0; j < bucket->keySize; j ++)
+				printf("%c", dna[j]);
+			printf(": ");
+			if(value->lunique)
+				printf("lunique, ");
+			else
+				printf("lNotunique, ");
+			if(value->runique)
+				printf("runique\n");
+			else
+				printf("rNotunique\n");
 			
-
 
 			bucket = bucket->next;
 
@@ -874,17 +858,6 @@ int main(int argc, char** argv)
 		}
 		tabCount = 0;
 
-	}
-	printf("Top %d scores:\n", NUM_RESULTS_TO_SHOW);
-	for(int i = 0; i < NUM_RESULTS_TO_SHOW; i ++)
-	{
-		hashBucket_t* bucket = buckets[topScoreIds[i]];
-		for(int j = 0; j < topScoreTab[i]; j ++)
-			bucket = bucket->next;
-
-		userIds* ids = (userIds*) getKey(bucket);
-		int* value = (int*) getValue(bucket);
-		printf("IDs: %d and %d: %d\n", ids->userAId, ids->userBId, *value);
 	}
 #endif
 
