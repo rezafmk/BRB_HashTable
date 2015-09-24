@@ -24,7 +24,7 @@
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 
 
-__global__ void dnaAssemblyKernelMultipass(
+__global__ void invertedIndexKernelMultipass(
 				char* data, 
 				unsigned numRecords,
 				unsigned numUsers,
@@ -77,7 +77,7 @@ __global__ void dnaAssemblyKernelMultipass(
 
 	for(unsigned j = 0; i < end; j ++)
 	{
-#if 0
+#if 1
 		if((prediction && j < epochNum && epochSuccessStatus[j] == (char) 1) || (!prediction && j > 1 && epochSuccessStatus[j - 2] == (char) 1))
 		{
 			i += iterations;
@@ -710,7 +710,7 @@ int main(int argc, char** argv)
 		printf("#######Error before calling the kernel is: %s\n", cudaGetErrorString(errR));
 		gettimeofday(&passtime_start, NULL);
 
-		dnaAssemblyKernelMultipass<<<grid, block2, 0, execStream>>>(
+		invertedIndexKernelMultipass<<<grid, block2, 0, execStream>>>(
 				phony, 
 				numRecords, //TODO fill this
 				numUsers,

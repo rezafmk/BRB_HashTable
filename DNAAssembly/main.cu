@@ -79,7 +79,7 @@ __global__ void dnaAssemblyKernelMultipass(
 
 	for(unsigned j = 0; i < end; j ++)
 	{
-#if 0
+#if 1
 		if((prediction && j < epochNum && epochSuccessStatus[j] == (char) 1) || (!prediction && j > 1 && epochSuccessStatus[j - 2] == (char) 1))
 		{
 			i += iterations;

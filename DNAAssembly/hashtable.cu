@@ -309,7 +309,7 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	mbk->numRecords = numRecords;
 
 
-	mbk->availableGPUMemory = (400 * (1 << 20));
+	mbk->availableGPUMemory = (640 * (1 << 20));
 	mbk->hhashTableBufferSize = MAX_NO_PASSES * mbk->availableGPUMemory;
 	mbk->hhashTableBaseAddr = malloc(mbk->hhashTableBufferSize);
 	memset(mbk->hhashTableBaseAddr, 0, mbk->hhashTableBufferSize);
