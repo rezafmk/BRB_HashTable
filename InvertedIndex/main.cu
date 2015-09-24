@@ -22,6 +22,7 @@
 #define NUM_RESULTS_TO_SHOW 20
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
+#define DISPLAY_RESULTS
 
 
 __global__ void invertedIndexKernelMultipass(
@@ -240,7 +241,8 @@ __global__ void invertedIndexKernelMultipass(
 				{
 
 					value.documentId = threadIdx.x;
-					value.next = NULL;
+					value.dnext = NULL;
+					value.hnext = NULL;
 
 					#if 1
 					
@@ -818,15 +820,8 @@ int main(int argc, char** argv)
 	
 
 #ifdef DISPLAY_RESULTS
-	int topScores[NUM_RESULTS_TO_SHOW];
-	int topScoreIds[NUM_RESULTS_TO_SHOW];
-	int topScoreTab[NUM_RESULTS_TO_SHOW];
-	memset(topScores, 0, NUM_RESULTS_TO_SHOW * sizeof(int));
-	memset(topScoreIds, 0, NUM_RESULTS_TO_SHOW * sizeof(int));
-	memset(topScoreTab, 0, NUM_RESULTS_TO_SHOW * sizeof(int));
-
 	int tabCount = 0;
-	for(int i = 0; i < 20; i ++)
+	for(int i = 0; i < 50; i ++)
 	{
 		hashBucket_t* bucket = buckets[i];
 
@@ -836,6 +831,12 @@ int main(int argc, char** argv)
 			value_t* value = (value_t*) getValue(bucket);
 			for(int j = 0; j < bucket->keySize; j ++)
 				printf("%c", dna[j]);
+			while(value != NULL)
+			{
+				printf(" DocID: %lld", value->documentId);
+				value = value->hnext;
+			}
+			printf("\n");
 
 			bucket = bucket->next;
 

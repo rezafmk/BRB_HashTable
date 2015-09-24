@@ -123,8 +123,10 @@ __device__ bool resolveSameKeyAddition(void const* key, void* value, void* oldVa
 	if(newValue != NULL)
 	{
 		newValue->documentId = ((value_t*) value)->documentId;
-		newValue->next = ((value_t*) oldValue)->next;
-		((value_t*) oldValue)->next = newValue;
+		newValue->dnext = ((value_t*) oldValue)->dnext;
+		newValue->hnext = ((value_t*) oldValue)->hnext;
+		((value_t*) oldValue)->dnext = newValue;
+		((value_t*) oldValue)->hnext = (value_t*) ((largeInt) newValue - (largeInt) mbk->dbuffer + group->valueParentPage->hashTableOffset);
 		return true;
 	}
 	return false;
@@ -157,61 +159,6 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 	return bucket;
 }
 
-__device__ bool atomicAttemptIncRefCount(int* refCount)
-{
-	int oldRefCount = *refCount;
-	int assume;
-	bool success;
-	do
-	{
-		success = false;
-		assume = oldRefCount;
-		if(oldRefCount >= 0)
-		{
-			oldRefCount = (int) atomicCAS((unsigned*) refCount, (unsigned) oldRefCount, oldRefCount + 1);
-			success = true;
-		}
-	} while(oldRefCount != assume);
-
-	return success;
-}
-
-__device__ int atomicDecRefCount(int* refCount)
-{
-	int oldRefCount = *refCount;
-	int assume;
-	do
-	{
-		assume = oldRefCount;
-		if(oldRefCount >= 0) // During normal times
-		{
-			oldRefCount = (int) atomicCAS((unsigned*) refCount, (unsigned) oldRefCount, (unsigned) (oldRefCount - 1));
-		}
-		else // During failure
-		{
-			oldRefCount = (int) atomicCAS((unsigned*) refCount, (unsigned) oldRefCount, (unsigned) (oldRefCount + 1));
-		}
-
-	} while(oldRefCount != assume);
-
-	return oldRefCount;
-}
-
-__device__ bool atomicNegateRefCount(int* refCount)
-{
-	int oldRefCount = *refCount;
-	int assume;
-	do
-	{
-		assume = oldRefCount;
-		if(oldRefCount >= 0)
-			oldRefCount = (int) atomicCAS((unsigned*) refCount, (unsigned) oldRefCount, ((oldRefCount * (-1)) - 1));
-
-	} while(oldRefCount != assume);
-
-	return (oldRefCount >= 0);
-	
-}
 
 __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSize, multipassConfig_t* mbk, int passno)
 {

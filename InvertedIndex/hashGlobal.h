@@ -24,7 +24,8 @@ typedef long long int largeInt;
 
 typedef struct value_t
 {
-	struct value_t* next;
+	struct value_t* hnext;
+	struct value_t* dnext;
 	largeInt documentId;
 } value_t;
 
