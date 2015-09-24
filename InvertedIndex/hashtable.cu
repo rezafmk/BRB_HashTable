@@ -124,9 +124,9 @@ __device__ bool resolveSameKeyAddition(void const* key, void* value, void* oldVa
 	{
 		newValue->documentId = ((value_t*) value)->documentId;
 		newValue->dnext = ((value_t*) oldValue)->dnext;
-		newValue->hnext = ((value_t*) oldValue)->hnext;
+		newValue->next = ((value_t*) oldValue)->next;
 		((value_t*) oldValue)->dnext = newValue;
-		((value_t*) oldValue)->hnext = (value_t*) ((largeInt) newValue - (largeInt) mbk->dbuffer + group->valueParentPage->hashTableOffset);
+		((value_t*) oldValue)->next = (value_t*) ((largeInt) newValue - (largeInt) mbk->dbuffer + group->valueParentPage->hashTableOffset);
 		return true;
 	}
 	return false;

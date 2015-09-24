@@ -242,7 +242,7 @@ __global__ void invertedIndexKernelMultipass(
 
 					value.documentId = threadIdx.x;
 					value.dnext = NULL;
-					value.hnext = NULL;
+					value.next = NULL;
 
 					#if 1
 					
@@ -834,7 +834,7 @@ int main(int argc, char** argv)
 			while(value != NULL)
 			{
 				printf(" DocID: %lld", value->documentId);
-				value = value->hnext;
+				value = value->next;
 			}
 			printf("\n");
 
