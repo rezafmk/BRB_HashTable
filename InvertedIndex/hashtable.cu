@@ -7,10 +7,12 @@ void hashtableInit(unsigned numBuckets, multipassConfig_t* mbk, unsigned groupSi
 	int numGroups = (numBuckets + (groupSize - 1)) / groupSize;
 	cudaMalloc((void**) &(mbk->groups), numGroups * sizeof(bucketGroup_t));
 	cudaMalloc((void**) &(mbk->buckets), numBuckets * sizeof(hashBucket_t*));
+	cudaMalloc((void**) &(mbk->dbuckets), numBuckets * sizeof(hashBucket_t*));
 	cudaMalloc((void**) &(mbk->locks), numBuckets * sizeof(unsigned));
 	cudaMalloc((void**) &(mbk->isNextDeads), numBuckets * sizeof(short));
 	
 	cudaMemset(mbk->groups, 0, numGroups * sizeof(bucketGroup_t));
+	cudaMemset(mbk->dbuckets, 0, numBuckets * sizeof(hashBucket_t*));
 	cudaMemset(mbk->buckets, 0, numBuckets * sizeof(hashBucket_t*));
 	cudaMemset(mbk->locks, 0, numBuckets * sizeof(unsigned));
 	cudaMemset(mbk->isNextDeads, 0, numBuckets * sizeof(short));
@@ -115,15 +117,17 @@ __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
 }
 
 
-__device__ void resolveSameKeyAddition(void const* key, void* value, void* oldValue)
+__device__ bool resolveSameKeyAddition(void const* key, void* value, void* oldValue, bucketGroup_t* group, multipassConfig_t* mbk)
 {
-	value_t* mainValue = (value_t*) oldValue;
-	value_t* newValue = (value_t*) value;
-	
-	if(mainValue->rextension != newValue->rextension)
-		mainValue->runique = false;
-	if(mainValue->lextension != newValue->lextension)
-		mainValue->lunique = false;
+	value_t* newValue = (value_t*) multipassMallocValue(sizeof(value_t), group, mbk);
+	if(newValue != NULL)
+	{
+		newValue->documentId = ((value_t*) value)->documentId;
+		newValue->next = ((value_t*) oldValue)->next;
+		((value_t*) oldValue)->next = newValue;
+		return true;
+	}
+	return false;
 }
 
 __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize, multipassConfig_t* mbk)
@@ -144,8 +148,8 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 		if(success)
 			break;
 
-		if(bucket->isNextDead == 0 && bucket->next != NULL)
-			bucket = (hashBucket_t*) ((largeInt) bucket->next - mbk->hashTableOffset + (largeInt) mbk->dbuffer);
+		if(bucket->isNextDead == 0 && bucket->dnext != NULL)
+			bucket = bucket->dnext;
 		else
 			bucket = NULL;
 	}
@@ -209,7 +213,7 @@ __device__ bool atomicNegateRefCount(int* refCount)
 	
 }
 
-__device__ bool addToHashtable(void* key, int keySize, void* value, int valueSize, multipassConfig_t* mbk)
+__device__ bool addToHashtable(void* key, int keySize, void* value, int valueSize, multipassConfig_t* mbk, int passno)
 {
 	bool success = true;
 	unsigned hashValue = hashFunc((char*) key, keySize, mbk->numBuckets);
@@ -232,32 +236,49 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 
 		if(oldLock == 0)
 		{
-			hashBucket_t* bucket = NULL;
-			if(mbk->buckets[hashValue] != NULL)
-				bucket = (hashBucket_t*) ((largeInt) mbk->buckets[hashValue] - mbk->hashTableOffset + (largeInt) mbk->dbuffer);
+			hashBucket_t* dbucket = mbk->dbuckets[hashValue];
+			hashBucket_t* hbucket = mbk->buckets[hashValue];
+
 			//First see if the key already exists in one of the entries of this bucket
 			//The returned bucket is the 'entry' in which the key exists
-			if(mbk->isNextDeads[hashValue] != 1 && (existingBucket = containsKey(bucket, key, keySize, mbk)) != NULL)
+			if(mbk->isNextDeads[hashValue] != 1 && (existingBucket = containsKey(dbucket, key, keySize, mbk)) != NULL)
 			{
 				void* oldValue = (void*) ((largeInt) existingBucket + sizeof(hashBucket_t) + keySizeAligned);
-				resolveSameKeyAddition(key, value, oldValue);
+				if(!resolveSameKeyAddition(key, value, oldValue, group, mbk))
+				{
+					group->needed = 1;
+					page_t* temp = group->parentPage;
+					while(temp != NULL)
+					{
+						temp->needed = 1;
+						temp = temp->next;
+					}
+					success = false;
+				}
 			}
 			else
 			{
-				hashBucket_t* newBucket = (hashBucket_t*) multipassMalloc(sizeof(hashBucket_t) + keySizeAligned + valueSizeAligned, group, mbk, groupNo);
+				hashBucket_t* newBucket = (hashBucket_t*) multipassMalloc(sizeof(hashBucket_t) + keySizeAligned + valueSizeAligned, group, mbk);
 				if(newBucket != NULL)
 				{
 					//TODO reduce the base offset if not null
 					//newBucket->next = (bucket == NULL)? NULL : (hashBucket_t*) ((largeInt) bucket - (largeInt) mbk->dbuffer);
+					newBucket->dnext = NULL;
 					newBucket->next = NULL;
-					if(bucket != NULL)
-						newBucket->next = (hashBucket_t*) ((largeInt) bucket - (largeInt) mbk->dbuffer + mbk->hashTableOffset);
+					if(dbucket != NULL)
+					{
+						newBucket->dnext = dbucket;
+						newBucket->next = hbucket;
+					}
+
 					if(mbk->isNextDeads[hashValue] == 1)
 						newBucket->isNextDead = 1;
 					newBucket->keySize = (short) keySize;
 					newBucket->valueSize = (short) valueSize;
-						
-					mbk->buckets[hashValue] = (hashBucket_t*) ((largeInt) newBucket - (largeInt) mbk->dbuffer + mbk->hashTableOffset);
+
+					mbk->dbuckets[hashValue] = newBucket;
+					mbk->buckets[hashValue] = (hashBucket_t*) ((largeInt) newBucket - (largeInt) mbk->dbuffer + group->parentPage->hashTableOffset);
+
 					mbk->isNextDeads[hashValue] = 0;
 
 					//TODO: this assumes that input key is aligned by ALIGNMENT, which is not a safe assumption
@@ -284,7 +305,9 @@ __global__ void setGroupsPointersDead(multipassConfig_t* mbk, unsigned numBucket
 	int index = TID;
 	if(index < numBuckets)
 	{
-		mbk->isNextDeads[index] = 1;
+		int groupNo = index / mbk->groupSize;
+		if(mbk->groups[groupNo].needed == 0)
+			mbk->isNextDeads[index] = 1;
 	}
 	
 }
@@ -309,10 +332,11 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	mbk->numRecords = numRecords;
 
 
-	mbk->availableGPUMemory = (400 * (1 << 20));
+	mbk->availableGPUMemory = (230 * (1 << 20));
 	mbk->hhashTableBufferSize = MAX_NO_PASSES * mbk->availableGPUMemory;
 	mbk->hhashTableBaseAddr = malloc(mbk->hhashTableBufferSize);
 	memset(mbk->hhashTableBaseAddr, 0, mbk->hhashTableBufferSize);
+	mbk->hashTableOffset = (largeInt) mbk->hhashTableBaseAddr;
 
 	//This is how we decide the number of groups: based on the number of available pages, we make sure 
 	//group size is calculated in a way that a given number of `pagePerGroup` pages are assigned to each group
@@ -334,7 +358,6 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 
 	// Calling initPaging
 	initPaging(mbk->availableGPUMemory, mbk);
-	mbk->hashTableOffset = (largeInt) mbk->hhashTableBaseAddr;
 
 	hashtableInit(NUM_BUCKETS, mbk, mbk->groupSize);
 	
@@ -362,6 +385,9 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 
 bool checkAndResetPass(multipassConfig_t* mbk, multipassConfig_t* dmbk)
 {
+	cudaError_t errR = cudaGetLastError();
+	printf("#######Error at the beginning of checkAndReset: %s\n", cudaGetErrorString(errR));
+
 	cudaMemcpy(mbk, dmbk, sizeof(multipassConfig_t), cudaMemcpyDeviceToHost);
 	bool failedFlag = false;
 	int* hostCompleteFlag = mbk->hostCompleteFlag;
@@ -394,9 +420,42 @@ bool checkAndResetPass(multipassConfig_t* mbk, multipassConfig_t* dmbk)
 	cudaMemcpy(&failedFlag, dfailedFlag, sizeof(bool), cudaMemcpyDeviceToHost);
 	cudaMemset(dfailedFlag, 0, sizeof(bool));
 
+	cudaMemcpy(mbk->hpages, mbk->pages, mbk->totalNumPages * sizeof(page_t), cudaMemcpyDeviceToHost);
 
-	cudaMemcpy((void*) mbk->hashTableOffset, mbk->dbuffer, mbk->totalNumPages * PAGE_SIZE, cudaMemcpyDeviceToHost);
-	cudaMemset(mbk->dbuffer, 0, mbk->totalNumPages * PAGE_SIZE);
+	
+	cudaMemcpy(mbk->hfreeListId, mbk->freeListId, mbk->totalNumPages * sizeof(int), cudaMemcpyDeviceToHost);
+
+	int freeListCounter = 0;
+	int neededCounter = 0;
+	int unneededCounter = 0;
+	for(int i = 0; i < mbk->totalNumPages; i ++)
+	{
+		if(mbk->hpages[i].needed == 0)
+		{
+			cudaMemcpy((void*) ((largeInt) mbk->hpages[i].hashTableOffset + mbk->hpages[i].id * PAGE_SIZE), (void*) ((largeInt) mbk->dbuffer + mbk->hpages[i].id * PAGE_SIZE), PAGE_SIZE, cudaMemcpyDeviceToHost);
+			cudaMemset((void*) ((largeInt) mbk->dbuffer + mbk->hpages[i].id * PAGE_SIZE), 0, PAGE_SIZE);
+
+			mbk->hpages[i].hashTableOffset += mbk->totalNumPages * PAGE_SIZE;
+			mbk->hpages[i].next = NULL;
+			mbk->hpages[i].used = 0;
+
+			mbk->hfreeListId[freeListCounter ++] = mbk->hpages[i].id;
+			unneededCounter ++;
+		}
+		else
+		{
+			mbk->hpages[i].needed = 0;
+			//printf("Page %d is needed..\n", i);
+			neededCounter ++;
+		}
+	}
+
+	printf("@INFO: number of needed pages: %d, and number of unneededpages: %d (number of groups: %d)\n", neededCounter, unneededCounter, NUM_BUCKETS / mbk->groupSize);
+
+	cudaMemcpy(mbk->freeListId, mbk->hfreeListId, mbk->totalNumPages * sizeof(int), cudaMemcpyHostToDevice);
+	cudaMemcpy(mbk->pages, mbk->hpages, mbk->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
+	mbk->totalNumFreePages = freeListCounter;
+	
 
 	printf("totalnoPage * pagesize: %llu, hhashtbufferSize: %llu\n", (largeInt) mbk->totalNumPages * PAGE_SIZE, (largeInt) hhashTableBufferSize);
 	mbk->hashTableOffset += mbk->totalNumPages * PAGE_SIZE;
@@ -405,16 +464,20 @@ bool checkAndResetPass(multipassConfig_t* mbk, multipassConfig_t* dmbk)
 		printf("Need more space on CPU memory for the hash table. Aborting...\n");
 		exit(1);
 	}
-	cudaMemcpy(mbk->pages, mbk->hpages, mbk->totalNumPages * sizeof(page_t), cudaMemcpyHostToDevice);
+
+
 	mbk->initialPageAssignedCounter = 0;
 
+
+	errR = cudaGetLastError();
+	printf("#######Error before setGroupPointer is: %s\n", cudaGetErrorString(errR));
 
 	printf("Before calling setGroupPointer, number of grids: %d\n", ((NUM_BUCKETS) + 1023) / 1024);
 	setGroupsPointersDead<<<(((NUM_BUCKETS) + 1023) / 1024), 1024>>>(dmbk, NUM_BUCKETS);
 	//setGroupsPointersDead<<<(((NUM_BUCKETS) + 256) / 255), 256>>>(mbk->groups, NUM_BUCKETS, GROUP_SIZE);
 	cudaThreadSynchronize();
 
-	cudaError_t errR = cudaGetLastError();
+	errR = cudaGetLastError();
 	printf("#######Error after setGroupPointer is: %s\n", cudaGetErrorString(errR));
 
 	cudaMemcpy(myNumbers, dmyNumbers, 2 * numThreads * sizeof(int), cudaMemcpyDeviceToHost);
