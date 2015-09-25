@@ -1,6 +1,9 @@
 #include "global.h"
 #include "hashGlobal.h"
 #include "kernel.cu"
+#include <dirent.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 
 #define GB 1073741824
 
@@ -23,10 +26,148 @@
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 #define DISPLAY_RESULTS
+#define URL_SIZE 128
+
+typedef struct flist{
+   char *data;
+   char *name;
+   long long int fd; 
+   long long int size;
+} filelist_t;
+
+typedef struct
+{
+	largeInt startOffset;
+	largeInt endOffset;
+	char name[72];
+	largeInt nameSize;
+} fileName_t;
+
+
+
+long long unsigned int totalSize = 0;
+long long unsigned int curOffset = 0;
+int count = 0;
+int count2 = 0;
+
+void getFilesSize(char* path)
+{
+	DIR* dir;
+	struct dirent *ent;
+
+	if((dir=opendir(path)) != NULL)
+	{
+		while (( ent = readdir(dir)) != NULL)
+		{
+			if(ent->d_type == DT_REG)
+			{
+				char* newPath2 = (char*) malloc(strlen(path) + strlen(ent->d_name) + 2);
+				strcpy(newPath2, path);
+				strcat(newPath2, "/");
+				strcat(newPath2, ent->d_name);
+
+				struct stat finfo;
+				int fd = open(newPath2, O_RDONLY);
+				fstat(fd, &finfo);
+				totalSize += (finfo.st_size + 1);
+
+				close(fd);
+				free(newPath2);
+
+				count ++;
+			}
+				//printf("%s\n", ent->d_name);
+				
+			if(ent->d_type == DT_DIR && strcmp(ent->d_name, ".") != 0  && strcmp(ent->d_name, "..") != 0)
+			{
+				//printf("%s\n", ent->d_name);
+				char* newPath = (char*) malloc(strlen(path) + strlen(ent->d_name) + 2);
+				strcpy(newPath, path);
+				strcat(newPath, "/");
+				strcat(newPath, ent->d_name);
+				getFilesSize(newPath);
+				free(newPath);
+
+			}
+			//else if(ent->d_type == DT_REG && strcmp(ent->d_name, ".") != 0  && strcmp(ent->d_name, "..") != 0)
+			//{
+				//printf("%s\n", ent->d_name);
+			//}
+			
+		}
+
+		closedir(dir);
+	}
+}
+
+void getDataFiles(char* path, char* fdata, unsigned* offsets, fileName_t* fileNames)
+{
+	DIR* dir;
+	struct dirent *ent;
+
+	if((dir=opendir(path)) != NULL)
+	{
+		while (( ent = readdir(dir)) != NULL)
+		{
+			if(ent->d_type == DT_REG)
+			{
+				char* newPath2 = (char*) malloc(strlen(path) + strlen(ent->d_name) + 2);
+				strcpy(newPath2, path);
+				strcat(newPath2, "/");
+				strcat(newPath2, ent->d_name);
+
+
+				struct stat finfo;
+				int fd = open(newPath2, O_RDONLY);
+				fstat(fd, &finfo);
+
+
+				fileNames[count2].startOffset = curOffset;
+				fileNames[count2].endOffset = curOffset + finfo.st_size;
+				for(int i = 0; i < strlen(ent->d_name); i ++)
+					fileNames[count2].name[i] = ent->d_name[i];
+				fileNames[count2].nameSize = strlne(ent->d_name);
+
+				offsets[count2] = curOffset;
+				count2 ++;
+				read(fd, fdata + curOffset, finfo.st_size);
+				//There should be another data structure in which we store the name of the file. And somehow correspond the conent..
+				curOffset += finfo.st_size;
+				fdata[curOffset] = '\0';
+				curOffset ++;
+
+				close(fd);
+				free(newPath2);
+			}
+				//printf("%s\n", ent->d_name);
+				
+			if(ent->d_type == DT_DIR && strcmp(ent->d_name, ".") != 0  && strcmp(ent->d_name, "..") != 0)
+			{
+				//printf("%s\n", ent->d_name);
+				char* newPath = (char*) malloc(strlen(path) + strlen(ent->d_name) + 2);
+				strcpy(newPath, path);
+				strcat(newPath, "/");
+				strcat(newPath, ent->d_name);
+				getDataFiles(newPath, fdata, offsets, fileNames);
+				free(newPath);
+
+			}
+			//else if(ent->d_type == DT_REG && strcmp(ent->d_name, ".") != 0  && strcmp(ent->d_name, "..") != 0)
+			//{
+				//printf("%s\n", ent->d_name);
+			//}
+			
+		}
+
+		closedir(dir);
+	}
+}
+
 
 
 __global__ void invertedIndexKernelMultipass(
 				char* data, 
+				fileName_t* fileNames,
 				unsigned numRecords,
 				unsigned numUsers,
 				ptr_t* textAddrs,
@@ -49,11 +190,14 @@ __global__ void invertedIndexKernelMultipass(
 	bool* failedFlag = mbk->dfailedFlag;
 	char* epochSuccessStatus = mbk->depochSuccessStatus;
 
-	int chunkSize = numRecords / numThreads;
-	chunkSize = (numRecords % numThreads == 0)? chunkSize : chunkSize + 1;
-	int start = index * chunkSize;
-	int end = start + chunkSize;
-	end = (end > numRecords)? numRecords : end;
+	int recordChunkSize = numRecords / numThreads;
+	if(numRecords % numThreads != 0)
+		recordChunkSize ++;
+	int startRecord = index * chunkSize;
+	int endRecord = startRecord + chunkSize;
+	endRecord = (endRecord > numRecords)? numRecords : endRecord;
+
+	
 
 	int genericCounter;
 	
@@ -74,7 +218,21 @@ __global__ void invertedIndexKernelMultipass(
 
 	ptr_t previousAddrSpace1;
 	ptr_t firstAddrSpace1;
-	unsigned i = start;
+	unsigned i = startRecord;
+
+	for(i = startRecord to endRecord)
+	{
+		for(j = record[i] to record[i + 1])
+		{
+			use character record[i];
+		}
+	}
+
+	int currentRecord = startRecord;
+	unsigned i = fileNames[currentRecord].startOffset;
+	unsigned end  = fileNames[endRecord - 1].endOffset;
+	char* currentFileName = fileNames[currentRecord].name;
+	int currentFileNameSize = fileNames[currentRecord].nameSize;
 
 	for(unsigned j = 0; i < end; j ++)
 	{
@@ -215,51 +373,126 @@ __global__ void invertedIndexKernelMultipass(
 
 		if(!prediction && j > 1)
 		{
+			char URL[URL_SIZE]
+			long long int temp;
+			char* href = (char*) &temp;
+			href[0] = 'h';
+			href[1] = 'r';
+			href[2] = 'e';
+			href[3] = 'f';
+			href[4] = '\0';
+
 			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * READSIZE_ALIGNED + (threadIdx.x % 32) * COPYSIZE;
 			int step = 0;
 
 			int loopCounter = 0;
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
-				//TODO: since the hash table lib is ours, we can read the data in it coalescly.
-				char record[READSIZE_ALIGNED];
-				value_t value;
-				for(int k = 0; k < READSIZE_ALIGNED; k ++)
+				if(i >= fileNames[currentRecord].end)
 				{
-					if(states[i] == (char) 0)
-					{
-						char c = (textData + (s * iterations * READSIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
-						record[k] = c;
-					}
-
-					step ++;
-					genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
-					step %= COALESCEITEMSIZE;
+					currentRecord ++;
+					currentFileName = fileNames[currentRecord].name;
+					currentFileNameSize = fileNames[currentRecord].nameSize;
 				}
 
-				if(states[i] == (char) 0)
+				char c = (textData + (s * iterations * READSIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
+				step ++;
+				genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
+				step %= COALESCEITEMSIZE;
+
+				
+				int state = START;
+				char* link_end;
+
+				switch(state)
 				{
+					case START:
+						if (c == '<')
+						{
+							state = IN_TAG;
+						}
+						break;
+					case IN_TAG:
+						if (c == 'a')
+						{
+							state = IN_ATAG;
+						}
+						else if (c == ' ')
+						{
+							state = IN_TAG;
+						}
+						else state = START;
+						break;
+					case IN_ATAG:
+						if (c == 'h')
+						{
+							int x;
+							for (x = 0; x < 4; x++)
+							{
+								c = (textData + (s * iterations * READSIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
+								step ++;
+								genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
+								step %= COALESCEITEMSIZE;
+								i ++;
 
-					value.documentId = threadIdx.x;
-					value.dnext = NULL;
-					value.next = NULL;
+								if (href[x] != c)
+								{
+									state = START;
+									break;
+								}
+							}
+							state = FOUND_HREF;
+						}
+						else if (c == ' ') state = IN_ATAG;
+						else state = START;
+						break;
+					case FOUND_HREF:
+						if (c == ' ') state = FOUND_HREF;
+						else if (c == '=') state = FOUND_HREF;
+						else if (c == '\"')
+						{
+							state = START_LINK;
+						}
+						else state = START;
+						break;
+					case START_LINK:
+						
+						char* startLink = &buf[j];
+						int linkSize = 0;
+						while(true)
+						{
+							if(c == '\"' || linkSize >= URL_SIZE)
+								break;
+							URL[linkSize ++] = c;
 
-					#if 1
-					
-					if(addToHashtable((void*) &(record[0]), READSIZE, (void*) &value, sizeof(value_t), mbk, passNo) == true)
-					{
-						myNumbers[index * 2] ++;
-						states[i] = SUCCEED;
-					}
-					else
-					{
-						myNumbers[index * 2 + 1] ++;
-						*failedFlag = true;
-						epochSuccessStatus[j - 2] = FAILED;
-					}
-#endif
+							c = (textData + (s * iterations * READSIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
+							step ++;
+							genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
+							step %= COALESCEITEMSIZE;
+							i ++;
+
+
+						}
+
+						if(states[i] == (char) 0)
+						{
+							if(addToHashtable((void*) URL, linkSize, (void*) currentFileName, currentFileNameSize, mbk, passNo) == true)
+							{
+								myNumbers[index * 2] ++;
+								states[i] = SUCCEED;
+							}
+							else
+							{
+								myNumbers[index * 2 + 1] ++;
+								*failedFlag = true;
+								epochSuccessStatus[j - 2] = FAILED;
+							}
+						}
+
+						state = START;
+						break;
 				}
-					
+
 			}
 
 			s = (s + 1) % 3;
@@ -531,54 +764,33 @@ int main(int argc, char** argv)
 	cudaError_t errR;
 	cudaThreadExit();
 
-	int fd;
-        char *fdata;
-        struct stat finfo;
-        char *fname;
+        if (argc != 2)
+	{
+		printf("usage: %s <dir>\n", argv[0]);
+		exit(-1);
+	}
 
-        if(argc < 2)
-        {
-                printf("USAGE: %s <inputFile>\n", argv[0]);
-                exit(1);
-        }
+	getFilesSize(argv[1]);
+	printf("Count files is %d\n", count);
+	printf("Tottal size is %lluMB\n", totalSize / (1 << 20));
+	printf("Allocating %ldMB for fileNames\n", (count * sizeof(fileName_t)) / (1 << 20));
+	fileName_t* fileNames = (fileName_t*) malloc(count * sizeof(fileName_t));
+	
 
-        fname = argv[1];
+	unsigned int* offsets = (unsigned*) malloc((count + 1) * sizeof(unsigned));
+	memset(offsets, 0, count * sizeof(unsigned));
 
-	int numUsers = 31000;
-        fd = open(fname, O_RDONLY);
-        fstat(fd, &finfo);
+	char* fdata = (char*) malloc(totalSize);
 
-        size_t fileSize = (size_t) finfo.st_size;
-        printf("Allocating %lluMB for the positive file.\n", ((long long unsigned int) fileSize) / (1 << 20));
-        fdata = (char *) malloc(fileSize);
-
-        largeInt maxReadSize = MAXREAD;
-        largeInt readed = 0;
-        largeInt toRead = 0;
-
-        if(fileSize > maxReadSize)
-        {
-                largeInt offset = 0;
-                while(offset < fileSize)
-                {
-                        toRead = (maxReadSize < (fileSize - offset))? maxReadSize : (fileSize - offset);
-                        readed += pread(fd, fdata + offset, toRead, offset);
-                        printf("read: %lliMB\n", toRead / (1 << 20));
-                        offset += toRead;
-                }
-        }
-        else
-        {
-                readed = read (fd, fdata, fileSize);
-        }
-
-        if(readed != fileSize)
-        {
-                printf("Not all of the positive file is read. Read: %lluMB, total: %luMB\n", readed, fileSize);
-                return 1;
-        }
+	getDataFiles(argv[1], fdata, offsets, fileNames);
+	offsets[count] = totalSize;
 
 
+        
+	return 0;
+
+	largeInt fileSize = 0;
+	int numUsers = 0;
 
 	dim3 block(BLOCKSIZE, 1, 1);
 	dim3 block2((BLOCKSIZE * 2), 1, 1);
