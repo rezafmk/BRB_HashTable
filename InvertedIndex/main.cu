@@ -4,6 +4,9 @@
 #include <dirent.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
 
 #define GB 1073741824
 
@@ -27,6 +30,13 @@
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 #define DISPLAY_RESULTS
 #define URL_SIZE 128
+
+#define START           0x00 
+#define IN_TAG          0x01 
+#define IN_ATAG         0x02 
+#define FOUND_HREF      0x03 
+#define START_LINK      0x04
+
 
 typedef struct flist{
    char *data;
@@ -126,7 +136,7 @@ void getDataFiles(char* path, char* fdata, unsigned* offsets, fileName_t* fileNa
 				fileNames[count2].endOffset = curOffset + finfo.st_size;
 				for(int i = 0; i < strlen(ent->d_name); i ++)
 					fileNames[count2].name[i] = ent->d_name[i];
-				fileNames[count2].nameSize = strlne(ent->d_name);
+				fileNames[count2].nameSize = strlen(ent->d_name);
 
 				offsets[count2] = curOffset;
 				count2 ++;
@@ -169,7 +179,6 @@ __global__ void invertedIndexKernelMultipass(
 				char* data, 
 				fileName_t* fileNames,
 				unsigned numRecords,
-				unsigned numUsers,
 				ptr_t* textAddrs,
 				char* textData,
 				int volatile* completeFlag,
@@ -193,8 +202,8 @@ __global__ void invertedIndexKernelMultipass(
 	int recordChunkSize = numRecords / numThreads;
 	if(numRecords % numThreads != 0)
 		recordChunkSize ++;
-	int startRecord = index * chunkSize;
-	int endRecord = startRecord + chunkSize;
+	int startRecord = index * recordChunkSize;
+	int endRecord = startRecord + recordChunkSize;
 	endRecord = (endRecord > numRecords)? numRecords : endRecord;
 
 	
@@ -218,23 +227,12 @@ __global__ void invertedIndexKernelMultipass(
 
 	ptr_t previousAddrSpace1;
 	ptr_t firstAddrSpace1;
-	unsigned i = startRecord;
 
-	for(i = startRecord to endRecord)
-	{
-		for(j = record[i] to record[i + 1])
-		{
-			use character record[i];
-		}
-	}
 
-	int currentRecord = startRecord;
-	unsigned i = fileNames[currentRecord].startOffset;
+	int fileInUse = startRecord;
+	unsigned i = fileNames[fileInUse].startOffset;
 	unsigned end  = fileNames[endRecord - 1].endOffset;
-	char* currentFileName = fileNames[currentRecord].name;
-	int currentFileNameSize = fileNames[currentRecord].nameSize;
-
-	for(unsigned j = 0; i < end; j ++)
+	for(unsigned j = 0; i < (end - 128); j ++)
 	{
 #if 1
 		if((prediction && j < epochNum && epochSuccessStatus[j] == (char) 1) || (!prediction && j > 1 && epochSuccessStatus[j - 2] == (char) 1))
@@ -304,11 +302,11 @@ __global__ void invertedIndexKernelMultipass(
 			if(validatedArray[(threadIdx.x / 32)])
 			{
 				bool equalPattern = true;
-				for(int j = 0; j < 32; j ++)
+				for(int k = 0; k < 32; k ++)
 				{
 					//can be aggressively optimized!!
 					for(int m = 0; m < strideSizeSpace1; m ++)
-						if(addrDis1[(threadIdx.x % BLOCKSIZE) * PATTERNSIZE + m] != addrDis1[(((threadIdx.x % BLOCKSIZE) / WARPSIZE) * WARPSIZE + j) * PATTERNSIZE + m])
+						if(addrDis1[(threadIdx.x % BLOCKSIZE) * PATTERNSIZE + m] != addrDis1[(((threadIdx.x % BLOCKSIZE) / WARPSIZE) * WARPSIZE + k) * PATTERNSIZE + m])
 							equalPattern = false;
 				}
 
@@ -373,7 +371,7 @@ __global__ void invertedIndexKernelMultipass(
 
 		if(!prediction && j > 1)
 		{
-			char URL[URL_SIZE]
+			char URL[URL_SIZE];
 			long long int temp;
 			char* href = (char*) &temp;
 			href[0] = 'h';
@@ -386,14 +384,10 @@ __global__ void invertedIndexKernelMultipass(
 			int step = 0;
 
 			int loopCounter = 0;
-			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
+			for(; (loopCounter < iterations) && (i < (end - 1024)); loopCounter ++, i ++)
 			{
-				if(i >= fileNames[currentRecord].end)
-				{
-					currentRecord ++;
-					currentFileName = fileNames[currentRecord].name;
-					currentFileNameSize = fileNames[currentRecord].nameSize;
-				}
+				if(i >= fileNames[fileInUse].endOffset)
+					fileInUse ++;
 
 				char c = (textData + (s * iterations * READSIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
 				step ++;
@@ -402,7 +396,6 @@ __global__ void invertedIndexKernelMultipass(
 
 				
 				int state = START;
-				char* link_end;
 
 				switch(state)
 				{
@@ -457,7 +450,6 @@ __global__ void invertedIndexKernelMultipass(
 						break;
 					case START_LINK:
 						
-						char* startLink = &buf[j];
 						int linkSize = 0;
 						while(true)
 						{
@@ -476,8 +468,20 @@ __global__ void invertedIndexKernelMultipass(
 
 						if(states[i] == (char) 0)
 						{
-							if(addToHashtable((void*) URL, linkSize, (void*) currentFileName, currentFileNameSize, mbk, passNo) == true)
+							//if(addToHashtable((void*) URL, linkSize, (void*) fileNames[fileInUse].name, fileNames[fileInUse].nameSize, mbk, passNo) == true)
+							if(true)
 							{
+								
+								if(threadIdx.x == 512 && blockIdx.x == 0)
+								{
+									for(int m = 0; m < linkSize; m ++)
+										printf("%c", URL[m]);
+									printf(", fileName: ");
+									for(int m = 0; m < fileNames[fileInUse].nameSize; m ++)
+										printf("%c", fileNames[fileInUse].name[m]);
+									printf("\n");
+								}
+									
 								myNumbers[index * 2] ++;
 								states[i] = SUCCEED;
 							}
@@ -784,20 +788,18 @@ int main(int argc, char** argv)
 
 	getDataFiles(argv[1], fdata, offsets, fileNames);
 	offsets[count] = totalSize;
+	fileName_t* dfileNames;
+	cudaMalloc((void**) &dfileNames, count * sizeof(unsigned));
+	cudaMemcpy(dfileNames, fileNames, count * sizeof(unsigned), cudaMemcpyHostToDevice);
 
-
-        
-	return 0;
-
-	largeInt fileSize = 0;
-	int numUsers = 0;
+	largeInt fileSize = totalSize;
 
 	dim3 block(BLOCKSIZE, 1, 1);
 	dim3 block2((BLOCKSIZE * 2), 1, 1);
 	dim3 grid(MAXBLOCKS, 1, 1);
 	int numThreads = BLOCKSIZE * grid.x * grid.y;
 
-	unsigned numRecords = fileSize / RECORD_SIZE;
+	unsigned numRecords = fileSize / URL_SIZE;
 
 	//======================================================//
 	int chunkSize = EPOCHCHUNK * (1 << 20);
@@ -926,8 +928,8 @@ int main(int argc, char** argv)
 
 		invertedIndexKernelMultipass<<<grid, block2, 0, execStream>>>(
 				phony, 
+				dfileNames,
 				numRecords, //TODO fill this
-				numUsers,
 				textAddrs,
 				textData,
 				flags,
@@ -988,6 +990,8 @@ int main(int argc, char** argv)
 
 		errR = cudaGetLastError();
 		printf("Error after calling the kernel is: %s\n", cudaGetErrorString(errR));
+		if(errR != cudaSuccess)
+			exit(1);
 
 		cudaThreadSynchronize();
 
