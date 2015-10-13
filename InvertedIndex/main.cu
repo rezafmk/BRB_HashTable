@@ -10,17 +10,7 @@
 
 #define GB 1073741824
 
-#define RECORD_SIZE 128
-#define RECORD_SIZE_ALIGNED 128
-#define IDSIZE 31
-#define READSIZE 48
-#define READSIZE_ALIGNED 48
-
-#define IDLOCATION 0
-#define READLOCATION 32
-#define QSLOCATION 135
-
-#define KMERSIZE 39
+#define RECORD_SIZE 1
 
 #define MAXREAD 2040109465
 
@@ -178,6 +168,7 @@ void getDataFiles(char* path, char* fdata, unsigned* offsets, fileName_t* fileNa
 __global__ void invertedIndexKernelMultipass(
 				char* data, 
 				fileName_t* fileNames,
+				unsigned numFiles,
 				unsigned numRecords,
 				ptr_t* textAddrs,
 				char* textData,
@@ -199,12 +190,12 @@ __global__ void invertedIndexKernelMultipass(
 	bool* failedFlag = mbk->dfailedFlag;
 	char* epochSuccessStatus = mbk->depochSuccessStatus;
 
-	int recordChunkSize = numRecords / numThreads;
-	if(numRecords % numThreads != 0)
+	int recordChunkSize = numFiles / numThreads;
+	if(recordChunkSize % numThreads != 0)
 		recordChunkSize ++;
 	int startRecord = index * recordChunkSize;
 	int endRecord = startRecord + recordChunkSize;
-	endRecord = (endRecord > numRecords)? numRecords : endRecord;
+	endRecord = (endRecord > numFiles)? numFiles : endRecord;
 
 	
 
@@ -232,7 +223,7 @@ __global__ void invertedIndexKernelMultipass(
 	int fileInUse = startRecord;
 	unsigned i = fileNames[fileInUse].startOffset;
 	unsigned end  = fileNames[endRecord - 1].endOffset;
-	for(unsigned j = 0; i < (end - 128); j ++)
+	for(unsigned j = 0; i < end; j ++)
 	{
 #if 1
 		if((prediction && j < epochNum && epochSuccessStatus[j] == (char) 1) || (!prediction && j > 1 && epochSuccessStatus[j - 2] == (char) 1))
@@ -259,7 +250,7 @@ __global__ void invertedIndexKernelMultipass(
 			int loopCounter = 0;
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
-				ptr_t addr = (ptr_t) &data[i * RECORD_SIZE + READLOCATION];
+				ptr_t addr = (ptr_t) &data[i];
 				if(addrCounterSpace1 < PATTERNSIZE)
 					addrDis1[(threadIdx.x % BLOCKSIZE) * PATTERNSIZE + addrCounterSpace1] = (int) (addr - previousAddrSpace1);
 
@@ -283,7 +274,7 @@ __global__ void invertedIndexKernelMultipass(
 			loopCounter = 0;
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
-				ptr_t addr = (ptr_t) &data[i * RECORD_SIZE + READLOCATION];
+				ptr_t addr = (ptr_t) &data[i];
 				dataCountSpace1 ++;
 				if(addr != previousAddrSpace1)
 					validated = false;
@@ -332,7 +323,7 @@ __global__ void invertedIndexKernelMultipass(
 				loopCounter = 0;
 				for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 				{
-					(textAddrs + (s * (iterations * (blockDim.x / 2) * gridDim.x)))[genericCounter] = (ptr_t) &data[i * RECORD_SIZE + READLOCATION];
+					(textAddrs + (s * (iterations * (blockDim.x / 2) * gridDim.x)))[genericCounter] = (ptr_t) &data[i];
 					genericCounter += 32;
 				}
 			}
@@ -380,16 +371,19 @@ __global__ void invertedIndexKernelMultipass(
 			href[3] = 'f';
 			href[4] = '\0';
 
-			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * READSIZE_ALIGNED + (threadIdx.x % 32) * COPYSIZE;
+			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) + (threadIdx.x % 32) * COPYSIZE;
 			int step = 0;
 
 			int loopCounter = 0;
-			for(; (loopCounter < iterations) && (i < (end - 1024)); loopCounter ++, i ++)
+			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
 				if(i >= fileNames[fileInUse].endOffset)
-					fileInUse ++;
+				{
+					//if((fileInUse + 1) < numFiles)
+						fileInUse ++;
+				}
 
-				char c = (textData + (s * iterations * READSIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
+				char c = (textData + (s * iterations * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
 				step ++;
 				genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
 				step %= COALESCEITEMSIZE;
@@ -420,9 +414,9 @@ __global__ void invertedIndexKernelMultipass(
 						if (c == 'h')
 						{
 							int x;
-							for (x = 0; x < 4; x++)
+							for (x = 0; x < 4 && i < end; x++)
 							{
-								c = (textData + (s * iterations * READSIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
+								c = (textData + (s * iterations * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
 								step ++;
 								genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
 								step %= COALESCEITEMSIZE;
@@ -451,13 +445,13 @@ __global__ void invertedIndexKernelMultipass(
 					case START_LINK:
 						
 						int linkSize = 0;
-						while(true)
+						while(i < end)
 						{
 							if(c == '\"' || linkSize >= URL_SIZE)
 								break;
 							URL[linkSize ++] = c;
 
-							c = (textData + (s * iterations * READSIZE_ALIGNED * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
+							c = (textData + (s * iterations * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
 							step ++;
 							genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
 							step %= COALESCEITEMSIZE;
@@ -466,6 +460,7 @@ __global__ void invertedIndexKernelMultipass(
 
 						}
 
+#if 0
 						if(states[i] == (char) 0)
 						{
 							//if(addToHashtable((void*) URL, linkSize, (void*) fileNames[fileInUse].name, fileNames[fileInUse].nameSize, mbk, passNo) == true)
@@ -492,6 +487,7 @@ __global__ void invertedIndexKernelMultipass(
 								epochSuccessStatus[j - 2] = FAILED;
 							}
 						}
+#endif
 
 						state = START;
 						break;
@@ -591,17 +587,14 @@ void* copyMethodPattern(void* arg)
 			curAddrs = warpFirstLastAddrs[i].firstAddr;
 
 			//1
-			offset = ((myBlock * BLOCKSIZE + k * WARPSIZE) * epochDuration) * READSIZE_ALIGNED + i * COPYSIZE;
+			offset = ((myBlock * BLOCKSIZE + k * WARPSIZE) * epochDuration) + i * COPYSIZE;
 
 			copytype_t* tempSpace = (copytype_t*) &hostBuffer[0][offset];
 
 			//TODO this has to use strides to know what address to load next.
-			for(int j = 0; j < warpFirstLastAddrs[i].itemCount; j ++)
+			for(int j = 0; j < warpFirstLastAddrs[i].itemCount / COPYSIZE; j ++)
 			{
-				for(int m = 0; m < READSIZE_ALIGNED / COPYSIZE; m ++)
-				{
-					tempSpace[(j * (READSIZE_ALIGNED / COPYSIZE) + m) * WARPSIZE] = *((copytype_t*) &fdata[(curAddrs + j * RECORD_SIZE + m * COPYSIZE)]);
-				}
+				tempSpace[j * WARPSIZE] = *((copytype_t*) &fdata[(curAddrs + j * COPYSIZE)]);
 			}
 
 		}
@@ -789,8 +782,8 @@ int main(int argc, char** argv)
 	getDataFiles(argv[1], fdata, offsets, fileNames);
 	offsets[count] = totalSize;
 	fileName_t* dfileNames;
-	cudaMalloc((void**) &dfileNames, count * sizeof(unsigned));
-	cudaMemcpy(dfileNames, fileNames, count * sizeof(unsigned), cudaMemcpyHostToDevice);
+	cudaMalloc((void**) &dfileNames, count * sizeof(fileName_t));
+	cudaMemcpy(dfileNames, fileNames, count * sizeof(fileName_t), cudaMemcpyHostToDevice);
 
 	largeInt fileSize = totalSize;
 
@@ -813,7 +806,7 @@ int main(int argc, char** argv)
 	//======================================================//
 
 	//=================== Max num of iterations ============//
-	int maxIterations = numRecords / numThreads;
+	int maxIterations = fileSize / numThreads;
 
 	maxIterations ++;
 	if(epochNum > 1)
@@ -838,7 +831,7 @@ int main(int argc, char** argv)
 	//============================================//	
 
 	//========= URLHostBuffer ===========//
-	int textHostBufferSize = READSIZE_ALIGNED * iterations * numThreads * 3;
+	int textHostBufferSize = iterations * numThreads * 3;
 	char* tempTextHostBuffer;
 	tempTextHostBuffer = (char*) malloc(textHostBufferSize + MEMORY_ALIGNMENT);
 	char* hostTextHostBuffer;
@@ -887,7 +880,7 @@ int main(int argc, char** argv)
 	//============================================//
 
 	char* textData;
-	cudaMalloc((void**) &textData, READSIZE_ALIGNED * iterations * numThreads * 3);
+	cudaMalloc((void**) &textData, iterations * numThreads * 3);
 
 	char* phony = (char*) 0x0;
 	cudaStream_t execStream;
@@ -926,9 +919,11 @@ int main(int argc, char** argv)
 		printf("#######Error before calling the kernel is: %s\n", cudaGetErrorString(errR));
 		gettimeofday(&passtime_start, NULL);
 
+		printf("iteration is %d\n", iterations);
 		invertedIndexKernelMultipass<<<grid, block2, 0, execStream>>>(
 				phony, 
 				dfileNames,
+				count,
 				numRecords, //TODO fill this
 				textAddrs,
 				textData,
@@ -961,14 +956,14 @@ int main(int argc, char** argv)
 			argument[m]->threadBlockSize = BLOCKSIZE;
 			argument[m]->textItems = iterations;
 			argument[m]->textHostBuffer[0] = hostTextHostBuffer;
-			argument[m]->textHostBuffer[1] = hostTextHostBuffer + iterations * numThreads * READSIZE_ALIGNED;
-			argument[m]->textHostBuffer[2] = hostTextHostBuffer + iterations * numThreads * READSIZE_ALIGNED * 2;
+			argument[m]->textHostBuffer[1] = hostTextHostBuffer + iterations * numThreads;
+			argument[m]->textHostBuffer[2] = hostTextHostBuffer + iterations * numThreads * 2;
 			argument[m]->textAddrs[0] = hostTextAddrHostBuffer;
 			argument[m]->textAddrs[1] = hostTextAddrHostBuffer + iterations * numThreads;
 			argument[m]->textAddrs[2] = hostTextAddrHostBuffer +  iterations * numThreads * 2;
 			argument[m]->textData[0] = textData;
-			argument[m]->textData[1] = textData + iterations * numThreads * READSIZE_ALIGNED;
-			argument[m]->textData[2] = textData +  iterations * numThreads * READSIZE_ALIGNED * 2;
+			argument[m]->textData[1] = textData + iterations * numThreads;
+			argument[m]->textData[2] = textData +  iterations * numThreads * 2;
 			argument[m]->stridesSpace1[0] = hostStridesSpace1;
 			argument[m]->stridesSpace1[1] = hostStridesSpace1 + numThreads;
 			argument[m]->stridesSpace1[2] = hostStridesSpace1 + numThreads * 2;
@@ -976,7 +971,7 @@ int main(int argc, char** argv)
 			argument[m]->firstLastAddrsSpace1[0] = hostFirstLastSpace1;
 			argument[m]->firstLastAddrsSpace1[1] = hostFirstLastSpace1 + numThreads;
 			argument[m]->firstLastAddrsSpace1[2] = hostFirstLastSpace1 + numThreads * 2;
-			argument[m]->textItemSize = READSIZE_ALIGNED;
+			argument[m]->textItemSize = RECORD_SIZE;
 			argument[m]->sourceSpaceSize1 = fileSize;
 
 			pthread_create(&threads[m], NULL, pipelineData, (void*) argument[m]);
