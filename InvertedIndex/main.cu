@@ -126,6 +126,7 @@ void getDataFiles(char* path, char* fdata, unsigned* offsets, fileName_t* fileNa
 				fileNames[count2].endOffset = curOffset + finfo.st_size;
 				for(int i = 0; i < strlen(ent->d_name); i ++)
 					fileNames[count2].name[i] = ent->d_name[i];
+				
 				fileNames[count2].nameSize = strlen(ent->d_name);
 
 				offsets[count2] = curOffset;
@@ -198,10 +199,17 @@ __global__ void invertedIndexKernelMultipass(
 	unsigned end = start + recordChunkSize;
 	end = (end > fileNames[numFiles - 1].endOffset)? fileNames[numFiles - 1].endOffset : end;
 
-	int fileInUse = numFiles - 1;
+	int fileInUse = 0;
 	for(int i = 0; i < numFiles; i ++)
+	{
 		if(start < fileNames[i].endOffset)
+		{
 			fileInUse = i;
+			break;
+		}
+	}
+
+	__syncthreads();
 
 	int genericCounter;
 	
@@ -383,6 +391,7 @@ __global__ void invertedIndexKernelMultipass(
 				if(i >= fileNames[fileInUse].endOffset)
 				{
 					fileInUse ++;
+					//printf("changed to %d\n", fileInUse);
 				}
 
 				char c = (textData + (s * iterations * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
@@ -764,7 +773,6 @@ int main(int argc, char** argv)
 	printf("Allocating %ldMB for fileNames\n", (count * sizeof(fileName_t)) / (1 << 20));
 	fileName_t* fileNames = (fileName_t*) malloc(count * sizeof(fileName_t));
 	
-
 	unsigned int* offsets = (unsigned*) malloc((count + 1) * sizeof(unsigned));
 	memset(offsets, 0, count * sizeof(unsigned));
 
