@@ -190,14 +190,18 @@ __global__ void invertedIndexKernelMultipass(
 	bool* failedFlag = mbk->dfailedFlag;
 	char* epochSuccessStatus = mbk->depochSuccessStatus;
 
-	int recordChunkSize = numFiles / numThreads;
+	unsigned recordChunkSize = (fileNames[numFiles - 1].endOffset - fileNames[0].startOffset) / numThreads;
 	if(recordChunkSize % numThreads != 0)
 		recordChunkSize ++;
-	int startRecord = index * recordChunkSize;
-	int endRecord = startRecord + recordChunkSize;
-	endRecord = (endRecord > numFiles)? numFiles : endRecord;
 
-	
+	unsigned start = index * recordChunkSize;
+	unsigned end = start + recordChunkSize;
+	end = (end > fileNames[numFiles - 1].endOffset)? fileNames[numFiles - 1].endOffset : end;
+
+	int fileInUse = numFiles - 1;
+	for(int i = 0; i < numFiles; i ++)
+		if(start < fileNames[i].endOffset)
+			fileInUse = i;
 
 	int genericCounter;
 	
@@ -219,19 +223,16 @@ __global__ void invertedIndexKernelMultipass(
 	ptr_t previousAddrSpace1;
 	ptr_t firstAddrSpace1;
 
-
-	int fileInUse = startRecord;
-	unsigned i = fileNames[fileInUse].startOffset;
-	unsigned end  = fileNames[endRecord - 1].endOffset;
+	int stateCounter = (numRecords / numThreads) * index;
+	int state = START;
+	unsigned i = start;
 	for(unsigned j = 0; i < end; j ++)
 	{
-#if 1
 		if((prediction && j < epochNum && epochSuccessStatus[j] == (char) 1) || (!prediction && j > 1 && epochSuccessStatus[j - 2] == (char) 1))
 		{
 			i += iterations;
 			continue;
 		}
-#endif
 
 		if(prediction && j < epochNum)
 		{
@@ -357,12 +358,14 @@ __global__ void invertedIndexKernelMultipass(
 			} while(value != flagCPU[s]);
 		}
 
+		//Not all threads get to this point, some of them return early
 		if(!prediction)
 			asm volatile("bar.sync %0, %1;" ::"r"(5), "r"(blockDim.x / 2));
 
 		if(!prediction && j > 1)
 		{
-			char URL[URL_SIZE];
+			largeInt URL_largeInt[URL_SIZE / sizeof(largeInt)];
+			char* URL = (char*) URL_largeInt;
 			long long int temp;
 			char* href = (char*) &temp;
 			href[0] = 'h';
@@ -379,17 +382,16 @@ __global__ void invertedIndexKernelMultipass(
 			{
 				if(i >= fileNames[fileInUse].endOffset)
 				{
-					//if((fileInUse + 1) < numFiles)
-						fileInUse ++;
+					fileInUse ++;
 				}
 
 				char c = (textData + (s * iterations * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
+
 				step ++;
 				genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
 				step %= COALESCEITEMSIZE;
 
 				
-				int state = START;
 
 				switch(state)
 				{
@@ -414,13 +416,14 @@ __global__ void invertedIndexKernelMultipass(
 						if (c == 'h')
 						{
 							int x;
-							for (x = 0; x < 4 && i < end; x++)
+							for (x = 1; x < 4 && i < end; x++)
 							{
 								c = (textData + (s * iterations * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
 								step ++;
 								genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
 								step %= COALESCEITEMSIZE;
 								i ++;
+								loopCounter ++;
 
 								if (href[x] != c)
 								{
@@ -436,19 +439,20 @@ __global__ void invertedIndexKernelMultipass(
 					case FOUND_HREF:
 						if (c == ' ') state = FOUND_HREF;
 						else if (c == '=') state = FOUND_HREF;
-						else if (c == '\"')
+						else if (c == '\"' || c == '\'')
 						{
 							state = START_LINK;
 						}
-						else state = START;
+						else{ 
+							state = START;
+						
+						}
 						break;
 					case START_LINK:
 						
 						int linkSize = 0;
-						while(i < end)
+						while(linkSize < URL_SIZE && c != '\"' && c != '\'')
 						{
-							if(c == '\"' || linkSize >= URL_SIZE)
-								break;
 							URL[linkSize ++] = c;
 
 							c = (textData + (s * iterations * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
@@ -456,29 +460,16 @@ __global__ void invertedIndexKernelMultipass(
 							genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
 							step %= COALESCEITEMSIZE;
 							i ++;
-
-
+							loopCounter ++;
 						}
 
-#if 0
-						if(states[i] == (char) 0)
+						if(states[stateCounter] == (char) 0)
 						{
-							//if(addToHashtable((void*) URL, linkSize, (void*) fileNames[fileInUse].name, fileNames[fileInUse].nameSize, mbk, passNo) == true)
-							if(true)
+							//if(true)
+							if(addToHashtable((void*) URL, linkSize, (void*) fileNames[fileInUse].name, fileNames[fileInUse].nameSize, mbk, passNo) == true)
 							{
-								
-								if(threadIdx.x == 512 && blockIdx.x == 0)
-								{
-									for(int m = 0; m < linkSize; m ++)
-										printf("%c", URL[m]);
-									printf(", fileName: ");
-									for(int m = 0; m < fileNames[fileInUse].nameSize; m ++)
-										printf("%c", fileNames[fileInUse].name[m]);
-									printf("\n");
-								}
-									
 								myNumbers[index * 2] ++;
-								states[i] = SUCCEED;
+								states[stateCounter] = SUCCEED;
 							}
 							else
 							{
@@ -486,8 +477,8 @@ __global__ void invertedIndexKernelMultipass(
 								*failedFlag = true;
 								epochSuccessStatus[j - 2] = FAILED;
 							}
+							stateCounter ++;
 						}
-#endif
 
 						state = START;
 						break;
@@ -684,7 +675,7 @@ void* pipelineData(void* argument)
 	//printf("About entering the while %d\n", myBlock);
 	int s = 0;
         //while(notDone < 2)
-	while(cudaSuccess != cudaStreamQuery(*execStream))
+	while(cudaErrorNotReady == cudaStreamQuery(*execStream))
 	{
 		if(flags[myBlock * 12 + s * 2] == flagGPU[s])
 		{
