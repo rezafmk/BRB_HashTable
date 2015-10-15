@@ -21,99 +21,20 @@ void hashtableInit(unsigned numBuckets, multipassConfig_t* mbk, unsigned groupSi
 
 __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
 {
+        unsigned hash = 2166136261;
+        unsigned FNVMultiple = 16777619;
 
-	int numOuterLoopIterations = len / 16;
-	if(len % 16 != 0)
-		numOuterLoopIterations ++;
-	
-	unsigned finalValue = 0;
+        for(int i = 0; i < len; i ++)
+        {
+                char c = str[i];
 
-	for(int j = 0; j < numOuterLoopIterations; j ++)
-	{
-		unsigned hashValue = 0;
-		int startLen = 16 * j;
-		int endLen = startLen + 16;
-		endLen = (endLen < len)? endLen : len;
+                hash += (int) c;
+                hash = hash * FNVMultiple;  /* multiply by the magic number */
+                hash += len;
+                hash -= (int) c;
+        }
 
-		char temp[4];
-		temp[0] = (char) 0;
-		temp[1] = (char) 0;
-		temp[2] = (char) 0;
-		temp[3] = (char) 0;
-
-		for(int i = startLen; i < endLen; i ++)
-		{
-			int charCounter = (i % 16) / 4;
-
-			if(charCounter == 0)
-				charCounter = 3;
-			else if(charCounter == 1)
-				charCounter = 2;
-			else if(charCounter == 2)
-				charCounter = 1;
-			else if(charCounter == 3)
-				charCounter = 0;
-
-			if(i % 4 == 0)
-			{
-				if(str[i] == 'C')
-					temp[charCounter] = temp[charCounter] | (1 << 6);
-				else if(str[i] == 'G')
-					temp[charCounter] = temp[charCounter] | (1 << 7);
-				else if(str[i] == 'T')
-				{
-					temp[charCounter] = temp[charCounter] | (1 << 7);
-					temp[charCounter] = temp[charCounter] | (1 << 6);
-				}
-
-			}
-			else if(i % 4 == 1)
-			{
-				if(str[i] == 'C')
-					temp[charCounter] = temp[charCounter] | (1 << 4);
-				else if(str[i] == 'G')
-					temp[charCounter] = temp[charCounter] | (1 << 5);
-				else if(str[i] == 'T')
-				{
-					temp[charCounter] = temp[charCounter] | (1 << 5);
-					temp[charCounter] = temp[charCounter] | (1 << 4);
-				}
-
-			}
-			else if(i % 4 == 2)
-			{
-				if(str[i] == 'C')
-					temp[charCounter] = temp[charCounter] | (1 << 2);
-				else if(str[i] == 'G')
-					temp[charCounter] = temp[charCounter] | (1 << 3);
-				else if(str[i] == 'T')
-				{
-					temp[charCounter] = temp[charCounter] | (1 << 3);
-					temp[charCounter] = temp[charCounter] | (1 << 2);
-				}
-
-
-			}
-			else
-			{
-				if(str[i] == 'C')
-					temp[charCounter] = temp[charCounter] | (1 << 0);
-				else if(str[i] == 'G')
-					temp[charCounter] = temp[charCounter] | (1 << 1);
-				else if(str[i] == 'T')
-				{
-					temp[charCounter] = temp[charCounter] | (1 << 1);
-					temp[charCounter] = temp[charCounter] | (1 << 0);
-				}
-
-			}
-		}
-
-		hashValue = *((unsigned int*) &temp[0]);
-		finalValue += hashValue;
-	}
-
-        return finalValue % numBuckets;
+        return hash % numBuckets;
 }
 
 
@@ -191,6 +112,7 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 			if(mbk->isNextDeads[hashValue] != 1 && (existingBucket = containsKey(dbucket, key, keySize, mbk)) != NULL)
 			{
 				void* oldValue = (void*) ((largeInt) existingBucket + sizeof(hashBucket_t) + keySizeAligned);
+#if 0
 				if(!resolveSameKeyAddition(key, value, oldValue, group, mbk))
 				{
 					group->needed = 1;
@@ -202,6 +124,7 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 					}
 					success = false;
 				}
+#endif
 			}
 			else
 			{
