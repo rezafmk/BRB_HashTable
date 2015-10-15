@@ -1022,21 +1022,31 @@ int main(int argc, char** argv)
 	
 
 #ifdef DISPLAY_RESULTS
+	printf("Some results: \n");
 	int tabCount = 0;
-	for(int i = 0; i < 50; i ++)
+	for(int i = 0; i < 1000; i ++)
 	{
 		hashBucket_t* bucket = buckets[i];
 
 		while(bucket != NULL)
 		{
 			char* dna = (char*) getKey(bucket);
-			value_t* value = (value_t*) getValue(bucket);
+			valueHolder_t* valueHolder = (valueHolder_t*) getValueHolder(bucket);
 			for(int j = 0; j < bucket->keySize; j ++)
 				printf("%c", dna[j]);
-			while(value != NULL)
+			printf(": ");
+			while(valueHolder != NULL)
 			{
-				printf(" DocID: %lld", value->documentId);
-				value = value->next;
+				printf("[");
+				char* value = (char*) getValue(valueHolder);
+				unsigned valueSize = (unsigned) valueHolder->valueSize;
+				for(int j = 0; j < valueSize; j ++)
+					printf("%c", value[j]);
+				
+				//printf(" DocID: %lld", value->documentId);
+				//void* getValue(value_t* valueHolder)
+				valueHolder = valueHolder->next;
+				printf("] ");
 			}
 			printf("\n");
 
@@ -1047,6 +1057,7 @@ int main(int argc, char** argv)
 		tabCount = 0;
 
 	}
+	printf("\n");
 #endif
 
 	int totalDepth = 0;

@@ -37,17 +37,19 @@ __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
         return hash % numBuckets;
 }
 
-
-__device__ bool resolveSameKeyAddition(void const* key, void* value, void* oldValue, bucketGroup_t* group, multipassConfig_t* mbk)
+__device__ bool resolveSameKeyAddition(void const* key, void* value, int valueSize, void* oldValue, bucketGroup_t* group, multipassConfig_t* mbk)
 {
-	value_t* newValue = (value_t*) multipassMallocValue(sizeof(value_t), group, mbk);
+	//TODO: here make it compatible with the new structure of vlaue at the end fo the bucket...
+	valueHolder_t* newValue = (valueHolder_t*) multipassMallocValue(sizeof(valueHolder_t) + valueSize, group, mbk);
 	if(newValue != NULL)
 	{
-		newValue->documentId = ((value_t*) value)->documentId;
-		newValue->dnext = ((value_t*) oldValue)->dnext;
-		newValue->next = ((value_t*) oldValue)->next;
-		((value_t*) oldValue)->dnext = newValue;
-		((value_t*) oldValue)->next = (value_t*) ((largeInt) newValue - (largeInt) mbk->dbuffer + group->valueParentPage->hashTableOffset);
+		newValue->dnext = ((valueHolder_t*) oldValue)->dnext;
+		newValue->next = ((valueHolder_t*) oldValue)->next;
+		newValue->valueSize = (largeInt) valueSize;
+		setValue(newValue, value, valueSize);
+
+		((valueHolder_t*) oldValue)->dnext = newValue;
+		((valueHolder_t*) oldValue)->next = (valueHolder_t*) ((largeInt) newValue - (largeInt) mbk->dbuffer + group->valueParentPage->hashTableOffset);
 		return true;
 	}
 	return false;
@@ -112,8 +114,8 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 			if(mbk->isNextDeads[hashValue] != 1 && (existingBucket = containsKey(dbucket, key, keySize, mbk)) != NULL)
 			{
 				void* oldValue = (void*) ((largeInt) existingBucket + sizeof(hashBucket_t) + keySizeAligned);
-#if 0
-				if(!resolveSameKeyAddition(key, value, oldValue, group, mbk))
+#if 1
+				if(!resolveSameKeyAddition(key, value, valueSizeAligned, oldValue, group, mbk))
 				{
 					group->needed = 1;
 					page_t* temp = group->parentPage;
@@ -128,7 +130,7 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 			}
 			else
 			{
-				hashBucket_t* newBucket = (hashBucket_t*) multipassMalloc(sizeof(hashBucket_t) + keySizeAligned + valueSizeAligned, group, mbk);
+				hashBucket_t* newBucket = (hashBucket_t*) multipassMalloc(sizeof(hashBucket_t) + keySizeAligned + sizeof(valueHolder_t) + valueSizeAligned, group, mbk);
 				if(newBucket != NULL)
 				{
 					//TODO reduce the base offset if not null
@@ -155,7 +157,11 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 					for(int i = 0; i < (keySizeAligned / ALIGNMET); i ++)
 						*((largeInt*) ((largeInt) newBucket + sizeof(hashBucket_t) + i * ALIGNMET)) = *((largeInt*) ((largeInt) key + i * ALIGNMET));
 					for(int i = 0; i < (valueSizeAligned / ALIGNMET); i ++)
-						*((largeInt*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned + i * ALIGNMET)) = *((largeInt*) ((largeInt) value + i * ALIGNMET));
+						*((largeInt*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned + sizeof(valueHolder_t) + i * ALIGNMET)) = *((largeInt*) ((largeInt) value + i * ALIGNMET));
+					((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->next = NULL;
+					((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->dnext = NULL;
+					((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->valueSize = valueSize;
+					
 				}
 				else
 				{
@@ -374,10 +380,19 @@ void* getKey(hashBucket_t* bucket)
 	return (void*) ((largeInt) bucket + sizeof(hashBucket_t));
 }
 
-void* getValue(hashBucket_t* bucket)
+void* getValueHolder(hashBucket_t* bucket)
 {
 	int keySizeAligned = (bucket->keySize % ALIGNMET == 0)? bucket->keySize : bucket->keySize + (ALIGNMET - (bucket->keySize % ALIGNMET));
 	return (void*) ((largeInt) bucket + sizeof(hashBucket_t) + keySizeAligned);
 }
 
+void* getValue(valueHolder_t* valueHolder)
+{
+	return (void*) ((largeInt) valueHolder + sizeof(valueHolder_t));
+}
 
+__device__ void setValue(valueHolder_t* valueHoder, void* value, int valueSize)
+{
+	for(int i = 0; i < (valueSize / ALIGNMET); i ++)
+		*((largeInt*) ((largeInt) valueHoder + sizeof(valueHolder_t) + i * ALIGNMET)) = *((largeInt*) ((largeInt) value + i * ALIGNMET));
+}

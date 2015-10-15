@@ -22,12 +22,12 @@ enum recordType { UNTESTED = 0, SUCCEED = 1, FAILED = 2};
 
 typedef long long int largeInt;
 
-typedef struct value_t
+typedef struct valueHolder_t
 {
-	struct value_t* next;
-	struct value_t* dnext;
-	largeInt documentId;
-} value_t;
+	struct valueHolder_t* next;
+	struct valueHolder_t* dnext;
+	largeInt valueSize;
+} valueHolder_t;
 
 
 //================ paging structures ================//
@@ -165,5 +165,7 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 __global__ void setGroupsPointersDead(multipassConfig_t* mbk, unsigned numBuckets);;
 bool checkAndResetPass(multipassConfig_t* mbk, multipassConfig_t* dmbk);
 void* getKey(hashBucket_t* bucket);
-void* getValue(hashBucket_t* bucket);
+void* getValueHolder(hashBucket_t* bucket);
+void* getValue(valueHolder_t* valueHolder);
+__device__ void setValue(valueHolder_t* valueHoder, void* value, int valueSize);
 #endif
