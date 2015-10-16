@@ -36,21 +36,20 @@ typedef long long int largeInt;
 #define START_LINK      0x04
 
 
-typedef struct
+typedef struct valueHolder_t
 {
-	unsigned pad;
-	bool lunique;
-	bool runique;
-	char lextension;
-	char rextension;
-} value_t;
+	char* value;
+	largeInt valueSize;
+	struct valueHolder_t* next;
+	
+} valueHolder_t;
 
 
 typedef struct hashEntry_t
 {
 	struct hashEntry_t* next;
-	char key[READSIZE];	
-	value_t value;
+	char key[URL_SIZE];	
+	valueHolder_t* valueHolder;
 } hashEntry_t;
 
 typedef struct
@@ -277,9 +276,14 @@ bool addToHashtable(hashBucket_t* hashTable, char* key, int keySize, char* value
 	//The returned bucket is the 'entry' in which the key exists
 	if((existingEntry = containsKey(entry, key, keySize)) != NULL)
 	{
-		value_t* mainValue = (value_t*) &(existingEntry->value);
-		value_t* newValue = (value_t*) value;
-		
+		valueHolder_t* valueHolder = (valueHolder_t*) tc_malloc(sizeof(valueHolder_t) + valueSize);
+		valueHolder->value = (char*) ((largeInt) valueHolder + sizeof(valueHolder_t));
+		valueHolder->valueSize = valueSize;
+		for(int j = 0; j < valueSize; j ++)
+			valueHolder->value[j] = value[j];
+
+		valueHolder->next = entry->valueHolder;
+		entry->valueHolder = valueHolder;
 	}
 	else
 	{
@@ -292,7 +296,16 @@ bool addToHashtable(hashBucket_t* hashTable, char* key, int keySize, char* value
 			for(int j = 0; j < keySize; j ++)
 				((char*) &(newEntry->key))[j] = key[j];
 
+			valueHolder_t* valueHolder = (valueHolder_t*) tc_malloc(sizeof(valueHolder_t) + valueSize);
+			valueHolder->value = (char*) ((largeInt) valueHolder + sizeof(valueHolder_t));
+			valueHolder->valueSize = valueSize;
+			for(int j = 0; j < valueSize; j ++)
+				valueHolder->value[j] = value[j];
+			
+			newEntry->valueHolder = valueHolder;
+
 			bucket->entry = newEntry;
+
 		}
 		else
 		{
@@ -420,15 +433,8 @@ void* kernel(void* arg)//char* records, int numRecords, int* recordSizes, int nu
 					c = records[i];
 				}
 
-#if 0
-				if(index == 0)
-				{
-					for(int j = 0; j < linkSize; j ++)
-						printf("%c", URL[j]);
-				}
-#endif
-
 #if 1
+				//if(true)
 				if(addToHashtable(hashTable, URL, linkSize, fileNames[fileInUse].name, fileNames[fileInUse].nameSize) == true)
 					status[index * 2] ++;
 				else
