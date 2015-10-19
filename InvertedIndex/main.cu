@@ -182,7 +182,11 @@ __global__ void invertedIndexKernelMultipass(
 				int numThreads,
 				multipassConfig_t* mbk,
 				char* states,
-				int passNo
+				int passNo,
+				char* urlBuffer,
+				unsigned urlBufferSizePerThread,
+				int* urlSizes,
+				int numUrlPerThread
 				)
 {
 	int index = TID2;
@@ -230,6 +234,8 @@ __global__ void invertedIndexKernelMultipass(
 
 	ptr_t previousAddrSpace1;
 	ptr_t firstAddrSpace1;
+	unsigned storedUrlOffset = urlBufferSizePerThread * index;
+	unsigned numStoredUrls = numUrlPerThread * index;
 
 	int stateCounter = (numRecords / numThreads) * index;
 	int state = START;
@@ -386,13 +392,20 @@ __global__ void invertedIndexKernelMultipass(
 			int step = 0;
 
 			int loopCounter = 0;
+			largeInt localEndOffset = fileNames[fileInUse].endOffset;
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
-				if(i >= fileNames[fileInUse].endOffset)
+#if 1
+				if(i >= localEndOffset)
 				{
+					
 					fileInUse ++;
+					localEndOffset = fileNames[fileInUse].endOffset;
 					//printf("changed to %d\n", fileInUse);
+					numStoredUrls = numUrlPerThread * index;
+					storedUrlOffset = urlBufferSizePerThread * index;
 				}
+#endif
 
 				char c = (textData + (s * iterations * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
 
@@ -462,6 +475,9 @@ __global__ void invertedIndexKernelMultipass(
 						int linkSize = 0;
 						while(linkSize < URL_SIZE && c != '\"' && c != '\'')
 						{
+							//urlBuffer[storedUrlOffset + linkSize] = c;
+							//linkSize ++;
+							
 							URL[linkSize ++] = c;
 
 							c = (textData + (s * iterations * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
@@ -471,6 +487,12 @@ __global__ void invertedIndexKernelMultipass(
 							i ++;
 							loopCounter ++;
 						}
+
+						//urlSizes[numStoredUrls] = linkSize;
+						//storedUrlOffset += (linkSize % 8 == 0)? linkSize : (linkSize + (8 - linkSize % 8));
+						
+						
+#if 1
 
 						if(states[stateCounter] == (char) 0)
 						{
@@ -488,6 +510,7 @@ __global__ void invertedIndexKernelMultipass(
 							}
 							stateCounter ++;
 						}
+#endif
 
 						state = START;
 						break;
@@ -886,6 +909,17 @@ int main(int argc, char** argv)
 	cudaStreamCreate(&execStream);
 	cudaStream_t copyStream;
 	cudaStreamCreate(&copyStream);
+
+	unsigned urlBufferSizePerThread = 10 * (1 << 10);
+	char* durlBuffer;
+	cudaMalloc((void**) &durlBuffer, urlBufferSizePerThread * numThreads);
+	cudaMemset(durlBuffer, 0, urlBufferSizePerThread * numThreads);
+
+	unsigned numUrlPerThread = 1000;
+	int* durlSizes;
+	cudaMalloc((void**) &durlSizes, numUrlPerThread * numThreads * sizeof(int));
+	cudaMemset(durlSizes, 0, numUrlPerThread * numThreads * sizeof(int));
+	
 	
 	//============ initializing the hash table and page table ==================//
 	int pagePerGroup = 50;
@@ -935,7 +969,11 @@ int main(int argc, char** argv)
 				numThreads,
 				dmbk,
 				mbk->dstates,
-				passNo
+				passNo,
+				durlBuffer,
+				urlBufferSizePerThread,
+				durlSizes,
+				numUrlPerThread
 				);
 
 
