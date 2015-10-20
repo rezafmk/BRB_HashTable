@@ -395,18 +395,6 @@ __global__ void invertedIndexKernelMultipass(
 			largeInt localEndOffset = fileNames[fileInUse].endOffset;
 			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
 			{
-#if 1
-				if(i >= localEndOffset)
-				{
-					
-					fileInUse ++;
-					localEndOffset = fileNames[fileInUse].endOffset;
-					//printf("changed to %d\n", fileInUse);
-					numStoredUrls = numUrlPerThread * index;
-					storedUrlOffset = urlBufferSizePerThread * index;
-				}
-#endif
-
 				char c = (textData + (s * iterations * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
 
 				step ++;
@@ -471,7 +459,13 @@ __global__ void invertedIndexKernelMultipass(
 						}
 						break;
 					case START_LINK:
-						
+
+						while(i >= localEndOffset)
+						{
+							fileInUse ++;
+							localEndOffset = fileNames[fileInUse].endOffset;
+						}
+
 						int linkSize = 0;
 						while(linkSize < URL_SIZE && c != '\"' && c != '\'')
 						{
@@ -1077,7 +1071,7 @@ int main(int argc, char** argv)
 		while(bucket != NULL)
 		{
 			char* dna = (char*) getKey(bucket);
-			valueHolder_t* valueHolder = (valueHolder_t*) getValueHolder(bucket);
+			valueHolder_t* valueHolder = bucket->valueHolder;
 			for(int j = 0; j < bucket->keySize; j ++)
 				printf("%c", dna[j]);
 			printf(": ");
@@ -1085,7 +1079,7 @@ int main(int argc, char** argv)
 			{
 				printf("[");
 				char* value = (char*) getValue(valueHolder);
-				unsigned valueSize = (unsigned) valueHolder->valueSize;
+				unsigned valueSize = (unsigned) (valueHolder->valueSize);
 				for(int j = 0; j < valueSize; j ++)
 					printf("%c", value[j]);
 				

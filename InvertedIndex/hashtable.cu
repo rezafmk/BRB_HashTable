@@ -147,6 +147,8 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 						newBucket->isNextDead = 1;
 					newBucket->keySize = (short) keySize;
 					newBucket->valueSize = (short) valueSize;
+					newBucket->dvalueHolder = (valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned);
+					newBucket->valueHolder = (valueHolder_t*) ((largeInt) newBucket->dvalueHolder - (largeInt) mbk->dbuffer + group->parentPage->hashTableOffset);;
 
 					mbk->dbuckets[hashValue] = newBucket;
 					mbk->buckets[hashValue] = (hashBucket_t*) ((largeInt) newBucket - (largeInt) mbk->dbuffer + group->parentPage->hashTableOffset);
@@ -156,11 +158,18 @@ __device__ bool addToHashtable(void* key, int keySize, void* value, int valueSiz
 					//TODO: this assumes that input key is aligned by ALIGNMENT, which is not a safe assumption
 					for(int i = 0; i < (keySizeAligned / ALIGNMET); i ++)
 						*((largeInt*) ((largeInt) newBucket + sizeof(hashBucket_t) + i * ALIGNMET)) = *((largeInt*) ((largeInt) key + i * ALIGNMET));
+					setValue(newBucket->dvalueHolder, value, valueSizeAligned);
+					newBucket->dvalueHolder->next = NULL;
+					newBucket->dvalueHolder->dnext = NULL;
+					newBucket->dvalueHolder->valueSize = (largeInt) valueSize;
+					
+#if 0
 					for(int i = 0; i < (valueSizeAligned / ALIGNMET); i ++)
 						*((largeInt*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned + sizeof(valueHolder_t) + i * ALIGNMET)) = *((largeInt*) ((largeInt) value + i * ALIGNMET));
 					((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->next = NULL;
 					((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->dnext = NULL;
 					((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->valueSize = valueSize;
+#endif
 					
 				}
 				else
@@ -391,7 +400,7 @@ void* getValue(valueHolder_t* valueHolder)
 	return (void*) ((largeInt) valueHolder + sizeof(valueHolder_t));
 }
 
-__device__ void setValue(valueHolder_t* valueHoder, void* value, int valueSize)
+__device__ inline void setValue(valueHolder_t* valueHoder, void* value, int valueSize)
 {
 	for(int i = 0; i < (valueSize / ALIGNMET); i ++)
 		*((largeInt*) ((largeInt) valueHoder + sizeof(valueHolder_t) + i * ALIGNMET)) = *((largeInt*) ((largeInt) value + i * ALIGNMET));

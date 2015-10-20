@@ -65,6 +65,8 @@ typedef struct hashBucket_t
 {
 	struct hashBucket_t* next;
 	struct hashBucket_t* dnext;
+	valueHolder_t* valueHolder;
+	valueHolder_t* dvalueHolder;
 	short isNextDead;
 	unsigned short lock;
 	short keySize;
