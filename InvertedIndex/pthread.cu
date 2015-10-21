@@ -352,7 +352,7 @@ void* kernel(void* arg)//char* records, int numRecords, int* recordSizes, int nu
 	int state = START;
 	char URL[URL_SIZE];
 	long long int temp;
-	char* href = (char*) &temp;
+	char href[6];
 
 	href[0] = 'h';
 	href[1] = 'r';
