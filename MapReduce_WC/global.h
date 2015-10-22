@@ -25,6 +25,7 @@
 
 #define MAXBLOCKS 16
 #define BLOCKSIZE 512
+#define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 
 //#define COAL 1
 #define EPOCHNUM 1
@@ -138,6 +139,7 @@ typedef struct
 	unsigned warpEnd;
 	unsigned int spaceDataItemSizes[4];
 	char* hostBuffer[4];
+        ptr_t* textAddrs;
 	char* srcSpace;
 	unsigned int epochDuration;
 	long long unsigned int sourceSpaceSize1;
@@ -153,5 +155,11 @@ typedef struct
 	int numThreads;
 	
 } simpleCopyPackage;
+
+typedef struct
+{
+	unsigned address;
+	unsigned size;
+} addr_size_t;
 
 #endif

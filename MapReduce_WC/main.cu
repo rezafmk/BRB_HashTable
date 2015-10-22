@@ -18,10 +18,32 @@
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 
+__device__ inline char data_in_char(int i, unsigned genericCounter)
+{
+	
+	unsigned genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * epochSizePerThread) + (threadIdx.x % 32) * COPYSIZE;
+	genericCounter += (i / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
+	//genericCounter += (i >> 3) * (WARPSIZE * COALESCEITEMSIZE);
+	//int step = i & (COALESCEITEMSIZE - 1);
+	int step = i % COALESCEITEMSIZE;
+	return (textData + (s * epochSizePerThread * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
+}
+
+__device__ inline int data_in_int(int i, unsigned genericCounter)
+{
+	i *= sizeof(int);
+	genericCounter += (i / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
+	//genericCounter += (i >> 3) * (WARPSIZE * COALESCEITEMSIZE);
+	//int step = i & (COALESCEITEMSIZE - 1);
+	int step = i % COALESCEITEMSIZE;
+	return *((int*) (textData + (s * epochSizePerThread * (blockDim.x / 2) * gridDim.x) + genericCounter + step));
+}
 
 __global__ void MapReduceKernelMultipass(
 				char* data, 
 				int numRecords,
+				unsigned* recordIndices,
+				unsigned* recordSizes,
 				unsigned numUsers,
 				ptr_t* textAddrs,
 				char* textData,
@@ -33,7 +55,8 @@ __global__ void MapReduceKernelMultipass(
 				int epochNum, 
 				int numThreads,
 				multipassConfig_t* mbk,
-				char* states
+				char* states,
+				unsigned numStates
 				)
 {
 	int index = TID2;
@@ -60,6 +83,10 @@ __global__ void MapReduceKernelMultipass(
 	flagCPU[1] = 1;
 	flagCPU[2] = 1;
 
+
+	// We don't check if we go out of bound in the stateCounter, basically because we allocate a very
+	// high number of states per threads to never overflow. But not a bad idea to think about having a boundary.
+	unsigned stateCounter = (numStates / numThreads) * index;
 	int s = 0;
 
 	int i = start;
@@ -69,23 +96,29 @@ __global__ void MapReduceKernelMultipass(
 #if 1
 		if((prediction && j < epochNum && epochSuccessStatus[j] == (char) 1) || (!prediction && j > 1 && epochSuccessStatus[j - 2] == (char) 1))
 		{
-			i += iterations;
+			i += numRecords;
 			continue;
 		}
 #endif
 
+		//lala
 		if(prediction && j < epochNum)	
 		{
 
-			genericCounter = (blockIdx.x * BLOCKSIZE + (threadIdx.x / 32) * WARPSIZE) * iterations + (threadIdx.x % 32);
+			genericCounter = (blockIdx.x * BLOCKSIZE + (threadIdx.x / 32) * WARPSIZE) * numRecords + (threadIdx.x % 32);
 
-			int loopCounter = 0;
+			unsigned predictedDataSize = 0;
 			int dataCountSpace1 = 0;
-			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
+			for(; (predictedDataSize < epochSizePerThread) && (i < end); i ++)
 			{
-				(textAddrs + (s * (iterations * (blockDim.x / 2) * gridDim.x)))[genericCounter] = (ptr_t) indices[i];
+				addr_size_t temp;
+				temp.address = (unsigned) recordIndices[i];
+				temp.size = recordSizes[i];
+				(textAddrs + (s * (numRecords * (blockDim.x / 2) * gridDim.x)))[genericCounter] = (ptr_t) temp;
+				predictedDataSize += temp.size;
 				genericCounter += 32;
-				dataCountSpace1 ++;
+				if(predictedDataSize <= epochSizePerThread)
+					dataCountSpace1 ++;
 			}
 
 			(firstLastAddrsSpace1 + (s * (blockDim.x / 2) * gridDim.x))[index].itemCount = dataCountSpace1;
@@ -122,78 +155,50 @@ __global__ void MapReduceKernelMultipass(
 		if(!prediction)
 			asm volatile("bar.sync %0, %1;" ::"r"(5), "r"(blockDim.x / 2));
 
+
+
 		if(!prediction && j > 1)
 		{
-			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * iterations) * RECORD_SIZE + (threadIdx.x % 32) * COPYSIZE;
+			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * epochSizePerThread) + (threadIdx.x % 32) * COPYSIZE;
 			int step = 0;
 
-			int loopCounter = 0;
-			for(; (loopCounter < iterations) && (i < end); loopCounter ++, i ++)
+			unsigned usedDataSize = recordSizes[i];
+			for(; (usedDataSize < epochSizePerThread) && (i < end); i ++)
 			{
-				//TODO: since the hash table lib is ours, we can read the data in it coalescly.
-				char record[RECORD_SIZE];
-				for(int k = 0; k < RECORD_SIZE; k ++)
-				{
-					if(states[i] == (char) 0)
-					{
-						char c = (textData + (s * iterations * RECORD_SIZE * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
-						record[k] = c;
-					}
-					//sum += (int) c;
-
-					step ++;
-					genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
-					step %= COALESCEITEMSIZE;
-				}
-
-				if(states[i] == (char) 0)
-				{
-					userIds key;
-					
-					key.userAId = getUserAID(record);
-					key.userBId = getUserBID(record);
-					key.numUsers = numUsers;
-					if(key.userBId > key.userAId)
-					{
-						int swap = key.userBId;
-						key.userBId = key.userAId;
-						key.userAId = swap;
-					}
-
-					int rateA = getUserARate(record);
-					int rateB = getUserBRate(record);
-
-
-					largeInt localScore = 0;
-					if(rateA == rateB)
-						localScore = 10;
-					else if(abs(rateA - rateB) == 1)
-						localScore = 2;
-					else
-						localScore = -5;
-
-
-					if(addToHashtable((void*) &key, sizeof(userIds), (void*) &localScore, sizeof(largeInt), mbk) == true)
-					{
-						myNumbers[index * 2] ++;
-						states[i] = SUCCEED;
-					}
-					else
-					{
-						myNumbers[index * 2 + 1] ++;
-						*failedFlag = true;
-						epochSuccessStatus[j - 2] = FAILED;
-					}
-				}
-					
+				map(genericCounter, recordSizes[i],
+						mbk, states, &stateCounter, myNumbers, epochSuccessStatus);
+				usedDataSize += recordSizes[i];
 			}
-				
+
+
+
 
 			s = (s + 1) % 3;
 		}
 
 		__syncthreads();
 	}
+}
+
+__device__ inline void emit(void* key, unsigned keySize, void* value, unsigned valueSize,
+		 multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, char* epochSuccessStatus)
+{
+
+	if(states[*stateCounter] == (char) 0)
+	{
+		if(addToHashtable(key, keySize, value, valueSize, mbk) == true)
+		{
+			myNumbers[index * 2] ++;
+			states[*stateCounter] = SUCCEED;
+		}
+		else
+		{
+			myNumbers[index * 2 + 1] ++;
+			*failedFlag = true;
+			epochSuccessStatus[j - 2] = FAILED;
+		}
+	}
+	*stateCounter += 1;
 }
 
 int countLines(char* input, size_t fileSize)
@@ -251,6 +256,7 @@ void* copyMethodPattern(void* arg)
 	char* fdata = pkg->srcSpace;
 	int myBlock = pkg->myBlock;
 	int epochDuration = pkg->epochDuration;
+	addr_size_t* textAddrs = (addr_size_t*) pkg->textAddrs;
 	//strides_t* stridesSpace[1];
 	//stridesSpace[0] = pkg->stridesSpace[0];
 	//long long unsigned int sourceSpaceSize1 = pkg->sourceSpaceSize1;
@@ -278,20 +284,25 @@ void* copyMethodPattern(void* arg)
 
 		for(int i = 0; i < WARPSIZE; i ++)
 		{
-			curAddrs = warpFirstLastAddrs[i].firstAddr;
-
+			int itemCount = warpFirstLastAddrs[i].itemCount;
 			//1
-			offset = ((myBlock * BLOCKSIZE + k * WARPSIZE) * epochDuration) * spaceDataItemSizes[0] + i * COPYSIZE;
-
+			int index = (myBlock * BLOCKSIZE + k * WARPSIZE + i);
+			offset = (myBlock * BLOCKSIZE + k * WARPSIZE + i) * COPYSIZE;
 			copytype_t* tempSpace = (copytype_t*) &hostBuffer[0][offset];
 
 			//TODO this has to use strides to know what address to load next.
 			for(int j = 0; j < warpFirstLastAddrs[i].itemCount; j ++)
 			{
-				for(int m = 0; m < RECORD_SIZE / COPYSIZE; m ++)
+				unsigned address = textAddrs[index + j * NUMTHREADS].address;
+				unsigned size = textAddrs[index * j * NUMTHREADS].size;
+				for(int m = 0; m < (size + (COPYSIZE - 1)) / COPYSIZE; m ++)
 				{
+					//TODO: here the problem is having very large strides (NUMTHREADS * COPYSIZE)
+					//so if a thread's data size is larger than other threads', we might go out of boundary
+					*((copytype_t*) &hostBuffer[0][offset + m * NUMTHREADS * COPYSIZE]) = 
 					tempSpace[(j * (RECORD_SIZE / COPYSIZE) + m) * WARPSIZE] = *((copytype_t*) &fdata[(curAddrs + j * RECORD_SIZE + m * COPYSIZE)]);
 				}
+				offset += ((size + (COPYSIZE - 1)) / COPYSIZE) * COPYSIZE * NUMTHREADS;
 			}
 
 		}
@@ -335,6 +346,12 @@ void* pipelineData(void* argument)
 	textHostBuffer[0] = threadData->textHostBuffer[0];
 	textHostBuffer[1] = threadData->textHostBuffer[1];
 	textHostBuffer[2] = threadData->textHostBuffer[2];
+
+	ptr_t* textAddrs[3];
+	textAddrs[0] = threadData->textAddrs[0];
+	textAddrs[1] = threadData->textAddrs[1];
+	textAddrs[2] = threadData->textAddrs[2];
+
 
 	long long unsigned int sourceSpaceSize1 = threadData->sourceSpaceSize1;
 
@@ -414,6 +431,7 @@ void* pipelineData(void* argument)
 				pkg[h].stridesSpace[0] = stridesSpace[0][s];
 				pkg[h].firstLastAddrsSpace[0] = firstLastAddrsSpace[0][s];
 				pkg[h].sourceSpaceSize1 = sourceSpaceSize1;
+				pkg[h].textAddrs = textAddrs[s];
 
 				if(h < (COPYTHREADS - 1))
 					int rc = pthread_create(&copyThreads[h], NULL, copyMethodPattern, (void*) &pkg[h]);
@@ -638,7 +656,7 @@ int main(int argc, char** argv)
 		printf("====================== starting pass %d ======================\n", passNo);
 		gettimeofday(&passtime_start, NULL);
 
-		netflixKernelMultipass<<<grid, block2, 0, execStream>>>(
+		MapReduceKernelMultipass<<<grid, block2, 0, execStream>>>(
 				phony, 
 				numRecords, //TODO fill this
 				numUsers,
@@ -680,9 +698,6 @@ int main(int argc, char** argv)
 			argument[m]->textData[0] = textData;
 			argument[m]->textData[1] = textData + iterations * numThreads * RECORD_SIZE;
 			argument[m]->textData[2] = textData +  iterations * numThreads * RECORD_SIZE * 2;
-			argument[m]->stridesSpace1[0] = hostStridesSpace1;
-			argument[m]->stridesSpace1[1] = hostStridesSpace1 + numThreads;
-			argument[m]->stridesSpace1[2] = hostStridesSpace1 + numThreads * 2;
 			argument[m]->epochDuration = iterations;
 			argument[m]->firstLastAddrsSpace1[0] = hostFirstLastSpace1;
 			argument[m]->firstLastAddrsSpace1[1] = hostFirstLastSpace1 + numThreads;
