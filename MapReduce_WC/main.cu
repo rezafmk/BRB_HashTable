@@ -4,11 +4,7 @@
 
 #define GB 1073741824
 
-#define RECORD_SIZE 64
-#define USERAIDLOCATION 6
-#define USERBIDLOCATION 35
-#define USERARATELOCATION 33
-#define USERBRATELOCATION 62
+#define WORD_MAX_SIZE 32;
 
 #define MAXREAD 2040109465
 
@@ -16,11 +12,13 @@
 #define DISPLAY_RESULTS
 #define NUM_RESULTS_TO_SHOW 20
 
+
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 
-__device__ inline char data_in_char(int i, unsigned genericCounter)
+__device__ inline char data_in_char(int i, int iCounter, char* textData, unsigned epochSizePerThread)
 {
 	
+	i += iCounter;
 	unsigned genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * epochSizePerThread) + (threadIdx.x % 32) * COPYSIZE;
 	genericCounter += (i / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
 	//genericCounter += (i >> 3) * (WARPSIZE * COALESCEITEMSIZE);
@@ -71,7 +69,7 @@ __global__ void MapReduceKernelMultipass(
 	int end = start + chunkSize;
 	end = (end > numRecords)? numRecords : end;
 
-	int genericCounter;
+	unsigned genericCounter;
 	
 	int flagGPU[3];
 	flagGPU[0] = 1;
@@ -160,23 +158,59 @@ __global__ void MapReduceKernelMultipass(
 		if(!prediction && j > 1)
 		{
 			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * epochSizePerThread) + (threadIdx.x % 32) * COPYSIZE;
-			int step = 0;
+			unsigned step = 0;
 
+			char c = (textData + (s * epochSizePerThread * (blockDim.x / 2) * gridDim.x) + )[genericCounter + step];
 			unsigned usedDataSize = recordSizes[i];
+			int iCounter = 0;
 			for(; (usedDataSize < epochSizePerThread) && (i < end); i ++)
 			{
-				map(genericCounter, recordSizes[i],
-						mbk, states, &stateCounter, myNumbers, epochSuccessStatus);
+				char* mapData = (char*) ((largeInt) textData + (s * epochSizePerThread * (blockDim.x / 2) * gridDim.x))
+				map(recordSizes[i],
+					mbk, states, &stateCounter, myNumbers, epochSuccessStatus,
+					mapData, iCounter, epochSizePerThread);
 				usedDataSize += recordSizes[i];
+				iCounter += recordSizes[i];
 			}
-
-
-
 
 			s = (s + 1) % 3;
 		}
 
 		__syncthreads();
+	}
+}
+
+__device__ inline void map(unsigned recordSize, 
+		multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, char* epochSuccessStatus, 
+		char* textData, int iCounter, unsigned epochSizePerThread)
+{
+	char word[WORD_MAX_SIZE];
+	bool inWord = false;
+	int startWord = 0;
+	int length = 0;
+	for(unsigned i = 0; i < recordSizes; i ++)
+	{
+		char c = data_in_char(i, iCounter, textData, epochSizePerThread);
+		if((c < 'a' || c > 'z') && inWord)
+		{
+			inWord = false;
+			if(length > 5 && length <= WORD_MAX_SIZE)
+			{
+				emit(word, length, (largeInt) 1, sizeof(largeInt), mbk, states, stateCounter, myNumbers, epochSuccessStatus);
+				unsigned hIndex = hashFunc(myWord, length, NUMHASHROWS, 0);
+				addToHashTable(myWord, length, hashTable, NUMHASHROWS, hIndex, locks);
+			}
+		}
+		else if((c >= 'a' && c <= 'z') && !inWord)
+		{
+			startWord = i;
+			inWord = true;
+		}
+		else if(inWord)
+		{
+			word[length] = c;
+			length ++;
+		}
 	}
 }
 
