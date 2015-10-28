@@ -4,16 +4,22 @@
 
 #define GB 1073741824
 
-#define WORD_MAX_SIZE 32;
+#define WORD_MAX_SIZE 32
 
 #define MAXREAD 2040109465
 
-#define EPOCHCHUNK 30
+#define EPOCHCHUNK 20
 #define DISPLAY_RESULTS
 #define NUM_RESULTS_TO_SHOW 20
+#define ESTIMATED_RECORD_SIZE 1024
 
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
+
+__device__ inline void map(unsigned recordSize, 
+		multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, char* epochSuccessStatus, 
+		char* textData, int iCounter, unsigned epochSizePerThread);
+
 
 __device__ inline char data_in_char(int i, int iCounter, char* textData, unsigned epochSizePerThread)
 {
@@ -24,9 +30,10 @@ __device__ inline char data_in_char(int i, int iCounter, char* textData, unsigne
 	//genericCounter += (i >> 3) * (WARPSIZE * COALESCEITEMSIZE);
 	//int step = i & (COALESCEITEMSIZE - 1);
 	int step = i % COALESCEITEMSIZE;
-	return (textData + (s * epochSizePerThread * (blockDim.x / 2) * gridDim.x))[genericCounter + step];
+	return textData[genericCounter + step];
 }
 
+#if 0
 __device__ inline int data_in_int(int i, unsigned genericCounter)
 {
 	i *= sizeof(int);
@@ -36,25 +43,24 @@ __device__ inline int data_in_int(int i, unsigned genericCounter)
 	int step = i % COALESCEITEMSIZE;
 	return *((int*) (textData + (s * epochSizePerThread * (blockDim.x / 2) * gridDim.x) + genericCounter + step));
 }
+#endif
 
 __global__ void MapReduceKernelMultipass(
-				char* data, 
+				char* data,
 				int numRecords,
 				unsigned* recordIndices,
 				unsigned* recordSizes,
-				unsigned numUsers,
 				ptr_t* textAddrs,
 				char* textData,
 				int volatile* completeFlag,
 				int* gpuFlags,
-				strides_t* stridesSpace1,
 				firstLastAddr_t* firstLastAddrsSpace1,
-				int iterations,
-				int epochNum, 
+				int epochNum,
 				int numThreads,
 				multipassConfig_t* mbk,
 				char* states,
-				unsigned numStates
+				unsigned numStates,
+				unsigned epochSizePerThread
 				)
 {
 	int index = TID2;
@@ -100,7 +106,7 @@ __global__ void MapReduceKernelMultipass(
 #endif
 
 		//lala
-		if(prediction && j < epochNum)	
+		if(prediction && j < epochNum)
 		{
 
 			genericCounter = (blockIdx.x * BLOCKSIZE + (threadIdx.x / 32) * WARPSIZE) * numRecords + (threadIdx.x % 32);
@@ -112,7 +118,7 @@ __global__ void MapReduceKernelMultipass(
 				addr_size_t temp;
 				temp.address = (unsigned) recordIndices[i];
 				temp.size = recordSizes[i];
-				(textAddrs + (s * (numRecords * (blockDim.x / 2) * gridDim.x)))[genericCounter] = (ptr_t) temp;
+				(textAddrs + (s * (numRecords * (blockDim.x / 2) * gridDim.x)))[genericCounter] = *((ptr_t*) &temp);
 				predictedDataSize += temp.size;
 				genericCounter += 32;
 				if(predictedDataSize <= epochSizePerThread)
@@ -160,17 +166,19 @@ __global__ void MapReduceKernelMultipass(
 			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * epochSizePerThread) + (threadIdx.x % 32) * COPYSIZE;
 			unsigned step = 0;
 
-			char c = (textData + (s * epochSizePerThread * (blockDim.x / 2) * gridDim.x) + )[genericCounter + step];
 			unsigned usedDataSize = recordSizes[i];
 			int iCounter = 0;
 			for(; (usedDataSize < epochSizePerThread) && (i < end); i ++)
 			{
-				char* mapData = (char*) ((largeInt) textData + (s * epochSizePerThread * (blockDim.x / 2) * gridDim.x))
+				char* mapData = (char*) ((largeInt) textData + (s * epochSizePerThread * (blockDim.x / 2) * gridDim.x));
 				map(recordSizes[i],
 					mbk, states, &stateCounter, myNumbers, epochSuccessStatus,
 					mapData, iCounter, epochSizePerThread);
 				usedDataSize += recordSizes[i];
 				iCounter += recordSizes[i];
+				//The following will make sure each record starts at a new 8-byte aligned location
+				if(iCounter % 8 != 0)
+					iCounter += (8 - (iCounter % 8));
 			}
 
 			s = (s + 1) % 3;
@@ -188,7 +196,7 @@ __device__ inline void map(unsigned recordSize,
 	bool inWord = false;
 	int startWord = 0;
 	int length = 0;
-	for(unsigned i = 0; i < recordSizes; i ++)
+	for(unsigned i = 0; i < recordSize; i ++)
 	{
 		char c = data_in_char(i, iCounter, textData, epochSizePerThread);
 		if((c < 'a' || c > 'z') && inWord)
@@ -196,9 +204,7 @@ __device__ inline void map(unsigned recordSize,
 			inWord = false;
 			if(length > 5 && length <= WORD_MAX_SIZE)
 			{
-				emit(word, length, (largeInt) 1, sizeof(largeInt), mbk, states, stateCounter, myNumbers, epochSuccessStatus);
-				unsigned hIndex = hashFunc(myWord, length, NUMHASHROWS, 0);
-				addToHashTable(myWord, length, hashTable, NUMHASHROWS, hIndex, locks);
+				//emit(word, length, (largeInt) 1, sizeof(largeInt), mbk, states, stateCounter, myNumbers, epochSuccessStatus);
 			}
 		}
 		else if((c >= 'a' && c <= 'z') && !inWord)
@@ -214,6 +220,7 @@ __device__ inline void map(unsigned recordSize,
 	}
 }
 
+#if 0
 __device__ inline void emit(void* key, unsigned keySize, void* value, unsigned valueSize,
 		 multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, char* epochSuccessStatus)
 {
@@ -234,6 +241,7 @@ __device__ inline void emit(void* key, unsigned keySize, void* value, unsigned v
 	}
 	*stateCounter += 1;
 }
+#endif
 
 int countLines(char* input, size_t fileSize)
 {
@@ -289,7 +297,7 @@ void* copyMethodPattern(void* arg)
 
 	char* fdata = pkg->srcSpace;
 	int myBlock = pkg->myBlock;
-	int epochDuration = pkg->epochDuration;
+	int epochDuration = pkg->epochDuration; // this is numRecords
 	addr_size_t* textAddrs = (addr_size_t*) pkg->textAddrs;
 	//strides_t* stridesSpace[1];
 	//stridesSpace[0] = pkg->stridesSpace[0];
@@ -304,8 +312,8 @@ void* copyMethodPattern(void* arg)
 	unsigned spaceDataItemSizes[1];
 	spaceDataItemSizes[0] = pkg->spaceDataItemSizes[0];
 
-	char* hostBuffer[1];
-	hostBuffer[0] = pkg->hostBuffer[0];
+	char* hostDataBuffer[1];
+	hostDataBuffer[0] = pkg->hostBuffer[0];
 
 
 	for(int k = warpStart; k < warpEnd; k ++)
@@ -318,25 +326,24 @@ void* copyMethodPattern(void* arg)
 
 		for(int i = 0; i < WARPSIZE; i ++)
 		{
-			int itemCount = warpFirstLastAddrs[i].itemCount;
+			unsigned itemCount = warpFirstLastAddrs[i].itemCount;
 			//1
-			int index = (myBlock * BLOCKSIZE + k * WARPSIZE + i);
-			offset = (myBlock * BLOCKSIZE + k * WARPSIZE + i) * COPYSIZE;
-			copytype_t* tempSpace = (copytype_t*) &hostBuffer[0][offset];
+			unsigned addressIndex = (myBlock * BLOCKSIZE + k * WARPSIZE) * epochDuration + i;
+
+			unsigned dataOffset = (myBlock * BLOCKSIZE + k * WARPSIZE) * spaceDataItemSizes[0] + i * COPYSIZE; //spaceDataItemSizes is epochSizePerThread
+			copytype_t* tempDataSpace = (copytype_t*) &hostDataBuffer[0][dataOffset];
 
 			//TODO this has to use strides to know what address to load next.
+			unsigned storedOffset = 0;
 			for(int j = 0; j < warpFirstLastAddrs[i].itemCount; j ++)
 			{
-				unsigned address = textAddrs[index + j * NUMTHREADS].address;
-				unsigned size = textAddrs[index * j * NUMTHREADS].size;
+				unsigned address = textAddrs[addressIndex + j * WARPSIZE].address;
+				unsigned size = textAddrs[addressIndex * j * WARPSIZE].size;
 				for(int m = 0; m < (size + (COPYSIZE - 1)) / COPYSIZE; m ++)
 				{
-					//TODO: here the problem is having very large strides (NUMTHREADS * COPYSIZE)
-					//so if a thread's data size is larger than other threads', we might go out of boundary
-					*((copytype_t*) &hostBuffer[0][offset + m * NUMTHREADS * COPYSIZE]) = 
-					tempSpace[(j * (RECORD_SIZE / COPYSIZE) + m) * WARPSIZE] = *((copytype_t*) &fdata[(curAddrs + j * RECORD_SIZE + m * COPYSIZE)]);
+					tempDataSpace[storedOffset + m * WARPSIZE] = *((copytype_t*) &fdata[(address + m * COPYSIZE)]);
 				}
-				offset += ((size + (COPYSIZE - 1)) / COPYSIZE) * COPYSIZE * NUMTHREADS;
+				storedOffset += ((size + (COPYSIZE - 1)) / COPYSIZE) * WARPSIZE;
 			}
 
 		}
@@ -481,7 +488,7 @@ void* pipelineData(void* argument)
 			notDone ++;
 
 			startGlobalTimer(myBlock); //copy from  pinned buffer to GPU memory
-			cudaMemcpyAsync(&gpuSpaces[0][s][myBlock * threadBlockSize * spaceDataItemSizes[0] * epochDuration], &(hostBuffer[0][s][myBlock * threadBlockSize * epochDuration * spaceDataItemSizes[0]]), epochDuration * threadBlockSize * spaceDataItemSizes[0], cudaMemcpyHostToDevice, *streamPtr);
+			cudaMemcpyAsync(&gpuSpaces[0][s][myBlock * threadBlockSize * spaceDataItemSizes[0]], &(hostBuffer[0][s][myBlock * threadBlockSize * spaceDataItemSizes[0]]), threadBlockSize * spaceDataItemSizes[0], cudaMemcpyHostToDevice, *streamPtr);
 
 			//while(cudaSuccess != cudaStreamQuery(*streamPtr));
 			endGlobalTimer(myBlock, "@@ Copy from pinned buffer to GPU memory");
@@ -504,6 +511,44 @@ void* pipelineData(void* argument)
 	return NULL;
 }
 
+void partitioner(char* data, unsigned size, unsigned* numRecords, unsigned** recordIndices, unsigned** recordSizes)
+{
+	unsigned estimatedRecordSize = ESTIMATED_RECORD_SIZE;
+	*recordIndices = (unsigned*) malloc(((size + estimatedRecordSize) / estimatedRecordSize) * sizeof(unsigned));
+	*recordSizes = (unsigned*) malloc(((size + estimatedRecordSize) / estimatedRecordSize) * sizeof(unsigned));
+
+	unsigned recordCounter = 0;
+	unsigned sizeCounter = 0;
+
+	while(sizeCounter < size)
+	{
+		if((sizeCounter + estimatedRecordSize) > size)
+		{
+			(*recordIndices)[recordCounter] = sizeCounter;
+			(*recordSizes)[recordCounter] = size - sizeCounter; 
+			recordCounter ++;
+			break;
+		}
+
+		int i = 0;
+		while((sizeCounter + estimatedRecordSize + i) < size && 
+				data[sizeCounter + estimatedRecordSize + i] <= 'z' && 
+				data[sizeCounter + estimatedRecordSize + i] >= 'a')
+		{
+			i ++;
+		}
+
+		(*recordIndices)[recordCounter] = sizeCounter;
+		(*recordSizes)[recordCounter] = estimatedRecordSize + i;
+		recordCounter ++;
+
+		sizeCounter += estimatedRecordSize + i;
+
+	}
+
+	*numRecords = recordCounter;
+}
+
 
 int main(int argc, char** argv)
 {
@@ -523,7 +568,6 @@ int main(int argc, char** argv)
 
         fname = argv[1];
 
-	int numUsers = 31000;
         fd = open(fname, O_RDONLY);
         fstat(fd, &finfo);
 
@@ -563,10 +607,22 @@ int main(int argc, char** argv)
 	dim3 grid(MAXBLOCKS, 1, 1);
 	int numThreads = BLOCKSIZE * grid.x * grid.y;
 
-	int numRecords = fileSize / RECORD_SIZE;
+	unsigned* recordIndices;
+	unsigned* recordSizes;
+	unsigned numRecords;
+
+	partitioner(fdata, fileSize, &numRecords, &recordIndices, &recordSizes);
+	
+	printf("Number of records: %d\n", numRecords);
+
 
 	//======================================================//
 	int chunkSize = EPOCHCHUNK * (1 << 20);
+	int epochSizePerThread = chunkSize / numThreads;
+	epochSizePerThread += ESTIMATED_RECORD_SIZE;
+
+	if(epochSizePerThread % 8 != 0)
+		epochSizePerThread += (8 - (epochSizePerThread % 8));
 
 	//TODO: make epochNum unnecessary
 	int epochNum = (int) (fileSize / chunkSize);
@@ -577,17 +633,21 @@ int main(int argc, char** argv)
 	//======================================================//
 
 	//=================== Max num of iterations ============//
-	int maxIterations = numRecords / numThreads;
+	unsigned maxIterations = (numRecords / numThreads) + 1;
 
-	maxIterations ++;
 	if(epochNum > 1)
+	{
 		maxIterations /= (epochNum);
+		maxIterations ++;
+	}
 	//======================================================//
 
 
 	int iterations = maxIterations;
 	if(iterations % 8 != 0)
 		iterations += (8 - (iterations % 8));
+
+
 
 	//========= URLAddrHostBuffer ===========//
 	unsigned int textAddrsHostBufferSize = sizeof(ptr_t) * iterations * numThreads * 3;
@@ -602,7 +662,7 @@ int main(int argc, char** argv)
 	//============================================//	
 
 	//========= URLHostBuffer ===========//
-	int textHostBufferSize = RECORD_SIZE * iterations * numThreads * 3;
+	int textHostBufferSize = epochSizePerThread * numThreads * 3;
 	char* tempTextHostBuffer;
 	tempTextHostBuffer = (char*) malloc(textHostBufferSize + MEMORY_ALIGNMENT);
 	char* hostTextHostBuffer;
@@ -651,7 +711,7 @@ int main(int argc, char** argv)
 	//============================================//
 
 	char* textData;
-	cudaMalloc((void**) &textData, RECORD_SIZE * iterations * numThreads * 3);
+	cudaMalloc((void**) &textData, epochSizePerThread * numThreads * 3);
 
 	char* phony = (char*) 0x0;
 	cudaStream_t execStream;
@@ -661,12 +721,13 @@ int main(int argc, char** argv)
 	
 	//============ initializing the hash table and page table ==================//
 	int pagePerGroup = 50;
+	int numStates = numRecords * (ESTIMATED_RECORD_SIZE / 4); //conservatively, assumeing 4-byte per words
 	multipassConfig_t* mbk = initMultipassBookkeeping(	(int*) hostCompleteFlag, 
 								gpuFlags, 
 								flagSize,
 								numThreads,
 								epochNum,
-								numRecords,
+								numStates,
 								pagePerGroup);
 	multipassConfig_t* dmbk;
 	cudaMalloc((void**) &dmbk, sizeof(multipassConfig_t));
@@ -691,20 +752,21 @@ int main(int argc, char** argv)
 		gettimeofday(&passtime_start, NULL);
 
 		MapReduceKernelMultipass<<<grid, block2, 0, execStream>>>(
-				phony, 
-				numRecords, //TODO fill this
-				numUsers,
+				phony,
+				numRecords,
+				recordIndices,
+				recordSizes,
 				textAddrs,
 				textData,
 				flags,
 				gpuFlags,
-				stridesSpace1,
 				firstLastAddrsSpace1,
-				iterations,
 				epochNum,
 				numThreads,
 				dmbk,
-				mbk->dstates
+				mbk->dstates,
+				numStates,
+				epochSizePerThread
 				);
 
 
@@ -724,19 +786,19 @@ int main(int argc, char** argv)
 			argument[m]->threadBlockSize = BLOCKSIZE;
 			argument[m]->textItems = iterations;
 			argument[m]->textHostBuffer[0] = hostTextHostBuffer;
-			argument[m]->textHostBuffer[1] = hostTextHostBuffer + iterations * numThreads * RECORD_SIZE;
-			argument[m]->textHostBuffer[2] = hostTextHostBuffer + iterations * numThreads * RECORD_SIZE * 2;
+			argument[m]->textHostBuffer[1] = hostTextHostBuffer + epochSizePerThread * numThreads;
+			argument[m]->textHostBuffer[2] = hostTextHostBuffer + epochSizePerThread * numThreads * 2;
 			argument[m]->textAddrs[0] = hostTextAddrHostBuffer;
-			argument[m]->textAddrs[1] = hostTextAddrHostBuffer + iterations * numThreads;
-			argument[m]->textAddrs[2] = hostTextAddrHostBuffer +  iterations * numThreads * 2;
+			argument[m]->textAddrs[1] = hostTextAddrHostBuffer + numRecords * numThreads;
+			argument[m]->textAddrs[2] = hostTextAddrHostBuffer +  numRecords * numThreads * 2;
 			argument[m]->textData[0] = textData;
-			argument[m]->textData[1] = textData + iterations * numThreads * RECORD_SIZE;
-			argument[m]->textData[2] = textData +  iterations * numThreads * RECORD_SIZE * 2;
-			argument[m]->epochDuration = iterations;
+			argument[m]->textData[1] = textData + epochSizePerThread * numThreads;
+			argument[m]->textData[2] = textData +  epochSizePerThread * numThreads * 2;
+			argument[m]->epochDuration = numRecords;
 			argument[m]->firstLastAddrsSpace1[0] = hostFirstLastSpace1;
 			argument[m]->firstLastAddrsSpace1[1] = hostFirstLastSpace1 + numThreads;
 			argument[m]->firstLastAddrsSpace1[2] = hostFirstLastSpace1 + numThreads * 2;
-			argument[m]->textItemSize = RECORD_SIZE;
+			argument[m]->textItemSize = epochSizePerThread;
 			argument[m]->sourceSpaceSize1 = fileSize;
 
 			pthread_create(&threads[m], NULL, pipelineData, (void*) argument[m]);
