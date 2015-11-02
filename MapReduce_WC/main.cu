@@ -20,6 +20,8 @@ __device__ inline void map(unsigned recordSize,
 		multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, char* epochSuccessStatus, 
 		char* textData, int iCounter, unsigned epochSizePerThread);
 
+__device__ inline void emit(void* key, unsigned keySize, void* value, unsigned valueSize,
+		 multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, char* epochSuccessStatus);
 
 __device__ inline char data_in_char(int i, int iCounter, char* textData, unsigned epochSizePerThread)
 {
@@ -215,9 +217,10 @@ __device__ inline void map(unsigned recordSize,
 		multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, char* epochSuccessStatus, 
 		char* textData, int iCounter, unsigned epochSizePerThread)
 {
-	char word[WORD_MAX_SIZE];
+	largeInt tempWord[WORD_MAX_SIZE/sizeof(largeInt)];
+	char* word = (char*) &tempWord[0];
 	bool inWord = false;
-	int length = 0;
+	unsigned length = 0;
 	for(unsigned i = 0; i < recordSize; i ++)
 	{
 		char c = data_in_char(i, iCounter, textData, epochSizePerThread);
@@ -229,7 +232,9 @@ __device__ inline void map(unsigned recordSize,
 			if(length > 5 && length <= WORD_MAX_SIZE)
 			{
 				//myNumbers[threadIdx.x] = 20;
-				//emit(word, length, (largeInt) 1, sizeof(largeInt), mbk, states, stateCounter, myNumbers, epochSuccessStatus);
+				largeInt myValue = 1;
+				emit((void*) word, length, (void*) &myValue, sizeof(largeInt), 
+					mbk, states, stateCounter, myNumbers, epochSuccessStatus);
 			}
 		}
 		else if((c >= 'a' && c <= 'z') && !inWord)
@@ -247,7 +252,7 @@ __device__ inline void map(unsigned recordSize,
 	}
 }
 
-#if 0
+#if 1
 __device__ inline void emit(void* key, unsigned keySize, void* value, unsigned valueSize,
 		 multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, char* epochSuccessStatus)
 {
@@ -256,14 +261,14 @@ __device__ inline void emit(void* key, unsigned keySize, void* value, unsigned v
 	{
 		if(addToHashtable(key, keySize, value, valueSize, mbk) == true)
 		{
-			myNumbers[index * 2] ++;
+			//myNumbers[index * 2] ++;
 			states[*stateCounter] = SUCCEED;
 		}
 		else
 		{
-			myNumbers[index * 2 + 1] ++;
-			*failedFlag = true;
-			epochSuccessStatus[j - 2] = FAILED;
+			//myNumbers[index * 2 + 1] ++;
+			//*failedFlag = true; //TODO: provide this
+			//epochSuccessStatus[j - 2] = FAILED;
 		}
 	}
 	*stateCounter += 1;
@@ -950,9 +955,11 @@ int main(int argc, char** argv)
 		for(int j = 0; j < topScoreTab[i]; j ++)
 			bucket = bucket->next;
 
-		userIds* ids = (userIds*) getKey(bucket);
+		char* word = (char*) getKey(bucket);
 		int* value = (int*) getValue(bucket);
-		printf("IDs: %d and %d: %d\n", ids->userAId, ids->userBId, *value);
+		for(int j = 0; j < bucket->keySize; j ++)
+			printf("%c", word[j]);
+		printf(": %d\n", *value);
 	}
 #endif
 
