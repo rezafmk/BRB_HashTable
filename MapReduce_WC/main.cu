@@ -185,17 +185,9 @@ __global__ void MapReduceKernelMultipass(
 			for(; (usedDataSize < epochSizePerThread) && (i < end); i ++)
 			{
 				char* mapData = (char*) ((largeInt) textData + (s * epochSizePerThread * (blockDim.x / 2) * gridDim.x));
-				char c = mapData[genericCounter + step];
-				if(threadIdx.x == BLOCKSIZE && blockIdx.x == 0)
-					printf("%c--", c);
-
-				genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
-				step %= COALESCEITEMSIZE;
-#if 0
 				map(recordSizes[i],
 					mbk, states, &stateCounter, myNumbers, epochSuccessStatus,
 					mapData, iCounter, epochSizePerThread);
-#endif
 				usedDataSize += recordSizes[i];
 				iCounter += recordSizes[i];
 				//The following will make sure each record starts at a new 8-byte aligned location
@@ -225,26 +217,26 @@ __device__ inline void map(unsigned recordSize,
 {
 	char word[WORD_MAX_SIZE];
 	bool inWord = false;
-	int startWord = 0;
 	int length = 0;
 	for(unsigned i = 0; i < recordSize; i ++)
 	{
 		char c = data_in_char(i, iCounter, textData, epochSizePerThread);
-		if(threadIdx.x == BLOCKSIZE && blockIdx.x == 0)
-			printf("%c", c);
-#if 0
+		
+#if 1
 		if((c < 'a' || c > 'z') && inWord)
 		{
 			inWord = false;
 			if(length > 5 && length <= WORD_MAX_SIZE)
 			{
+				//myNumbers[threadIdx.x] = 20;
 				//emit(word, length, (largeInt) 1, sizeof(largeInt), mbk, states, stateCounter, myNumbers, epochSuccessStatus);
 			}
 		}
 		else if((c >= 'a' && c <= 'z') && !inWord)
 		{
-			startWord = i;
 			inWord = true;
+			word[0] = c;
+			length = 1;
 		}
 		else if(inWord)
 		{
