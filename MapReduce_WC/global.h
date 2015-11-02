@@ -94,7 +94,7 @@ typedef struct
 	char* textHostBuffer[3];
 	strides_t* stridesSpace1[3];
 	int* stridesNoSpace1[3];
-	unsigned int epochDuration;
+	unsigned int iterations;
 	firstLastAddr_t* firstLastAddrsSpace1[3];
 	long long unsigned int sourceSpaceSize1;
 	int* gpuFlags;
@@ -119,7 +119,7 @@ typedef struct
 {
 	unsigned int myBlock;
 	unsigned int dataSize;
-	unsigned int epochDuration;
+	unsigned int iterations;
 	unsigned int loopStart;
 	unsigned int loopEnd;
 	ptr_t* addresses[2];
@@ -141,7 +141,7 @@ typedef struct
 	char* hostBuffer[4];
         ptr_t* textAddrs;
 	char* srcSpace;
-	unsigned int epochDuration;
+	unsigned int iterations;
 	long long unsigned int sourceSpaceSize1;
 
 } copyPackagePattern;

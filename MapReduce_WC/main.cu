@@ -48,6 +48,7 @@ __device__ inline int data_in_int(int i, unsigned genericCounter)
 __global__ void MapReduceKernelMultipass(
 				char* data,
 				int numRecords,
+				int epochIterations,
 				unsigned* recordIndices,
 				unsigned* recordSizes,
 				ptr_t* textAddrs,
@@ -69,6 +70,9 @@ __global__ void MapReduceKernelMultipass(
 	bool* failedFlag = mbk->dfailedFlag;
 	char* epochSuccessStatus = mbk->depochSuccessStatus;
 
+	__shared__ bool reloop;
+	reloop = true;
+	__syncthreads();
 	int chunkSize = numRecords / numThreads;
 	chunkSize = (numRecords % numThreads == 0)? chunkSize : chunkSize + 1;
 	int start = index * chunkSize;
@@ -95,9 +99,11 @@ __global__ void MapReduceKernelMultipass(
 
 	int i = start;
 
-	for(int j = 0; i < end; j ++)
+	for(int j = 0; reloop; j ++)
 	{
-#if 1
+		__syncthreads();
+		reloop = false;
+#if 0
 		if((prediction && j < epochNum && epochSuccessStatus[j] == (char) 1) || (!prediction && j > 1 && epochSuccessStatus[j - 2] == (char) 1))
 		{
 			i += numRecords;
@@ -108,8 +114,8 @@ __global__ void MapReduceKernelMultipass(
 		//lala
 		if(prediction && j < epochNum)
 		{
-
-			genericCounter = (blockIdx.x * BLOCKSIZE + (threadIdx.x / 32) * WARPSIZE) * numRecords + (threadIdx.x % 32);
+#if 1
+			genericCounter = (blockIdx.x * BLOCKSIZE + (threadIdx.x / 32) * WARPSIZE) * epochIterations + (threadIdx.x % 32);
 
 			unsigned predictedDataSize = 0;
 			int dataCountSpace1 = 0;
@@ -118,7 +124,7 @@ __global__ void MapReduceKernelMultipass(
 				addr_size_t temp;
 				temp.address = (unsigned) recordIndices[i];
 				temp.size = recordSizes[i];
-				(textAddrs + (s * (numRecords * (blockDim.x / 2) * gridDim.x)))[genericCounter] = *((ptr_t*) &temp);
+				(textAddrs + (s * (epochIterations * (blockDim.x / 2) * gridDim.x)))[genericCounter] = *((ptr_t*) &temp);
 				predictedDataSize += temp.size;
 				genericCounter += 32;
 				if(predictedDataSize <= epochSizePerThread)
@@ -126,13 +132,16 @@ __global__ void MapReduceKernelMultipass(
 			}
 
 			(firstLastAddrsSpace1 + (s * (blockDim.x / 2) * gridDim.x))[index].itemCount = dataCountSpace1;
-
+#endif
 		}
 
+#if 1
 		if(prediction)
 			asm volatile("bar.sync %0, %1;" ::"r"(4), "r"(blockDim.x / 2)); 
+			//asm volatile("bar.sync %0, %1;" ::"r"(4), "r"(leavers / 2)); 
+#endif
 
-
+#if 1
 		if(threadIdx.x == 0 && j < epochNum)
 		{
 			flagGPU[s] *= -1;
@@ -140,11 +149,11 @@ __global__ void MapReduceKernelMultipass(
 			__threadfence_system();
 		}
 	
-
+#endif
 		if(prediction && j < epochNum)
 			s = (s + 1) % 3;
 
-
+#if 1
 		if(!prediction && threadIdx.x == BLOCKSIZE && j > 1)
 		{
 			flagCPU[s] *= -1;
@@ -155,14 +164,19 @@ __global__ void MapReduceKernelMultipass(
 				
 			} while(value != flagCPU[s]);
 		}
+#endif
 
+#if 1
 		if(!prediction)
 			asm volatile("bar.sync %0, %1;" ::"r"(5), "r"(blockDim.x / 2));
+			//asm volatile("bar.sync %0, %1;" ::"r"(5), "r"(leavers / 2));
+#endif
 
 
 
 		if(!prediction && j > 1)
 		{
+#if 1
 			genericCounter = ((blockIdx.x * BLOCKSIZE + ((threadIdx.x - (blockDim.x / 2)) / WARPSIZE) * WARPSIZE) * epochSizePerThread) + (threadIdx.x % 32) * COPYSIZE;
 			unsigned step = 0;
 
@@ -171,21 +185,38 @@ __global__ void MapReduceKernelMultipass(
 			for(; (usedDataSize < epochSizePerThread) && (i < end); i ++)
 			{
 				char* mapData = (char*) ((largeInt) textData + (s * epochSizePerThread * (blockDim.x / 2) * gridDim.x));
+				char c = mapData[genericCounter + step];
+				if(threadIdx.x == BLOCKSIZE && blockIdx.x == 0)
+					printf("%c--", c);
+
+				genericCounter += (step / COALESCEITEMSIZE) * (WARPSIZE * COALESCEITEMSIZE);
+				step %= COALESCEITEMSIZE;
+#if 0
 				map(recordSizes[i],
 					mbk, states, &stateCounter, myNumbers, epochSuccessStatus,
 					mapData, iCounter, epochSizePerThread);
+#endif
 				usedDataSize += recordSizes[i];
 				iCounter += recordSizes[i];
 				//The following will make sure each record starts at a new 8-byte aligned location
 				if(iCounter % 8 != 0)
 					iCounter += (8 - (iCounter % 8));
 			}
+#endif
 
 			s = (s + 1) % 3;
 		}
 
 		__syncthreads();
+		//If at least one thread has to do the loop again, all should do it as well to avoid sync-lock
+		if(i < end)
+			reloop = true;
+		__syncthreads();
+		
+
+		
 	}
+	
 }
 
 __device__ inline void map(unsigned recordSize, 
@@ -199,6 +230,9 @@ __device__ inline void map(unsigned recordSize,
 	for(unsigned i = 0; i < recordSize; i ++)
 	{
 		char c = data_in_char(i, iCounter, textData, epochSizePerThread);
+		if(threadIdx.x == BLOCKSIZE && blockIdx.x == 0)
+			printf("%c", c);
+#if 0
 		if((c < 'a' || c > 'z') && inWord)
 		{
 			inWord = false;
@@ -217,6 +251,7 @@ __device__ inline void map(unsigned recordSize,
 			word[length] = c;
 			length ++;
 		}
+#endif
 	}
 }
 
@@ -297,7 +332,7 @@ void* copyMethodPattern(void* arg)
 
 	char* fdata = pkg->srcSpace;
 	int myBlock = pkg->myBlock;
-	int epochDuration = pkg->epochDuration; // this is numRecords
+	int iterations = pkg->iterations; // this is numRecords
 	addr_size_t* textAddrs = (addr_size_t*) pkg->textAddrs;
 	//strides_t* stridesSpace[1];
 	//stridesSpace[0] = pkg->stridesSpace[0];
@@ -328,7 +363,7 @@ void* copyMethodPattern(void* arg)
 		{
 			unsigned itemCount = warpFirstLastAddrs[i].itemCount;
 			//1
-			unsigned addressIndex = (myBlock * BLOCKSIZE + k * WARPSIZE) * epochDuration + i;
+			unsigned addressIndex = (myBlock * BLOCKSIZE + k * WARPSIZE) * iterations + i;
 
 			unsigned dataOffset = (myBlock * BLOCKSIZE + k * WARPSIZE) * spaceDataItemSizes[0] + i * COPYSIZE; //spaceDataItemSizes is epochSizePerThread
 			copytype_t* tempDataSpace = (copytype_t*) &hostDataBuffer[0][dataOffset];
@@ -338,12 +373,13 @@ void* copyMethodPattern(void* arg)
 			for(int j = 0; j < warpFirstLastAddrs[i].itemCount; j ++)
 			{
 				unsigned address = textAddrs[addressIndex + j * WARPSIZE].address;
-				unsigned size = textAddrs[addressIndex * j * WARPSIZE].size;
-				for(int m = 0; m < (size + (COPYSIZE - 1)) / COPYSIZE; m ++)
+				unsigned sssize = textAddrs[addressIndex + j * WARPSIZE].size;
+				for(int m = 0; m < (sssize + (COPYSIZE - 1)) / COPYSIZE; m ++)
 				{
-					tempDataSpace[storedOffset + m * WARPSIZE] = *((copytype_t*) &fdata[(address + m * COPYSIZE)]);
+					copytype_t t = *((copytype_t*) &fdata[(address + m * COPYSIZE)]);
+					tempDataSpace[storedOffset + m * WARPSIZE] = t;
 				}
-				storedOffset += ((size + (COPYSIZE - 1)) / COPYSIZE) * WARPSIZE;
+				storedOffset += ((sssize + (COPYSIZE - 1)) / COPYSIZE) * WARPSIZE;
 			}
 
 		}
@@ -379,7 +415,7 @@ void* pipelineData(void* argument)
 
         int threadBlockSize = threadData->threadBlockSize;
 
-	unsigned int epochDuration = threadData->epochDuration;
+	unsigned int iterations = threadData->iterations;
 
 	int textItemSize = threadData->textItemSize;
 
@@ -450,6 +486,7 @@ void* pipelineData(void* argument)
 				endGlobalTimer(myBlock, "@@ computation");
 
 			startGlobalTimer(myBlock); //data assembly
+#if 1
 
 			pthread_t copyThreads[COPYTHREADS - 1];
 			copyPackagePattern pkg[COPYTHREADS];
@@ -463,7 +500,7 @@ void* pipelineData(void* argument)
 
 				pkg[h].tid = h;
 				pkg[h].myBlock = myBlock;
-				pkg[h].epochDuration = epochDuration;
+				pkg[h].iterations = iterations;
 				pkg[h].warpStart = warpStart;
 				pkg[h].warpEnd = warpEnd;
 				pkg[h].spaceDataItemSizes[0] = spaceDataItemSizes[0];
@@ -492,6 +529,7 @@ void* pipelineData(void* argument)
 
 			//while(cudaSuccess != cudaStreamQuery(*streamPtr));
 			endGlobalTimer(myBlock, "@@ Copy from pinned buffer to GPU memory");
+#endif
 
 			flagCPU[s] *= -1;
 			flags[myBlock * 12 + s * 2 + 1] = flagCPU[s];
@@ -612,7 +650,22 @@ int main(int argc, char** argv)
 	unsigned numRecords;
 
 	partitioner(fdata, fileSize, &numRecords, &recordIndices, &recordSizes);
+
+	unsigned* drecordIndices;
+	unsigned* drecordSizes;
+	cudaMalloc((void**) &drecordIndices, numRecords * sizeof(unsigned));
+	cudaMalloc((void**) &drecordSizes, numRecords * sizeof(unsigned));
+	cudaMemcpy(drecordIndices, recordIndices, numRecords * sizeof(unsigned), cudaMemcpyHostToDevice);
+	cudaMemcpy(drecordSizes, recordSizes, numRecords * sizeof(unsigned), cudaMemcpyHostToDevice);
+
+#if 1
+	printf("printing some record offset and sizes:\n");
+	for(int i = 0; i < numRecords; i ++)
+		if(recordSizes[i] > 2000)
+			printf("offset: %u, size: %u\n", recordIndices[i], recordSizes[i]);
 	
+#endif
+
 	printf("Number of records: %d\n", numRecords);
 
 
@@ -646,7 +699,6 @@ int main(int argc, char** argv)
 	int iterations = maxIterations;
 	if(iterations % 8 != 0)
 		iterations += (8 - (iterations % 8));
-
 
 
 	//========= URLAddrHostBuffer ===========//
@@ -754,8 +806,9 @@ int main(int argc, char** argv)
 		MapReduceKernelMultipass<<<grid, block2, 0, execStream>>>(
 				phony,
 				numRecords,
-				recordIndices,
-				recordSizes,
+				iterations,
+				drecordIndices,
+				drecordSizes,
 				textAddrs,
 				textData,
 				flags,
@@ -789,12 +842,12 @@ int main(int argc, char** argv)
 			argument[m]->textHostBuffer[1] = hostTextHostBuffer + epochSizePerThread * numThreads;
 			argument[m]->textHostBuffer[2] = hostTextHostBuffer + epochSizePerThread * numThreads * 2;
 			argument[m]->textAddrs[0] = hostTextAddrHostBuffer;
-			argument[m]->textAddrs[1] = hostTextAddrHostBuffer + numRecords * numThreads;
-			argument[m]->textAddrs[2] = hostTextAddrHostBuffer +  numRecords * numThreads * 2;
+			argument[m]->textAddrs[1] = hostTextAddrHostBuffer + iterations * numThreads;
+			argument[m]->textAddrs[2] = hostTextAddrHostBuffer +  iterations * numThreads * 2;
 			argument[m]->textData[0] = textData;
 			argument[m]->textData[1] = textData + epochSizePerThread * numThreads;
 			argument[m]->textData[2] = textData +  epochSizePerThread * numThreads * 2;
-			argument[m]->epochDuration = numRecords;
+			argument[m]->iterations = iterations;
 			argument[m]->firstLastAddrsSpace1[0] = hostFirstLastSpace1;
 			argument[m]->firstLastAddrsSpace1[1] = hostFirstLastSpace1 + numThreads;
 			argument[m]->firstLastAddrsSpace1[2] = hostFirstLastSpace1 + numThreads * 2;
