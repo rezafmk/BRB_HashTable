@@ -224,7 +224,6 @@ __device__ inline void map(unsigned recordSize,
 	for(unsigned i = 0; i < recordSize; i ++)
 	{
 		char c = data_in_char(i, iCounter, textData, epochSizePerThread);
-		
 #if 1
 		if((c < 'a' || c > 'z') && inWord)
 		{
@@ -920,7 +919,6 @@ int main(int argc, char** argv)
 
 		while(bucket != NULL)
 		{
-			userIds* ids = (userIds*) getKey(bucket);
 			int* value = (int*) getValue(bucket);
 			for(int j = 0; j < NUM_RESULTS_TO_SHOW; j ++)
 			{
@@ -939,8 +937,6 @@ int main(int argc, char** argv)
 				}
 			}
 			
-
-
 			bucket = bucket->next;
 
 			tabCount ++;
@@ -955,6 +951,7 @@ int main(int argc, char** argv)
 		for(int j = 0; j < topScoreTab[i]; j ++)
 			bucket = bucket->next;
 
+		printf("ID: %d, ", topScoreIds[i]);
 		char* word = (char*) getKey(bucket);
 		int* value = (int*) getValue(bucket);
 		for(int j = 0; j < bucket->keySize; j ++)

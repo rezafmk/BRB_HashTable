@@ -18,8 +18,19 @@ void hashtableInit(unsigned numBuckets, multipassConfig_t* mbk, unsigned groupSi
 
 __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
 {
-	userIds* ids = (userIds*) str;
-	unsigned hash = ids->userAId * ids->numUsers + ids->userBId;
+
+        unsigned hash = 2166136261;
+        unsigned FNVMultiple = 16777619;
+
+        for(int i = 0; i < len; i ++)
+        {
+                char c = str[i];
+
+                hash += (int) c;
+                hash = hash * FNVMultiple;  /* multiply by the magic number */
+                hash += len;
+                hash -= (int) c;
+        }
 
         return hash % numBuckets;
 }
