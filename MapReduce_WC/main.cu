@@ -119,7 +119,7 @@ __global__ void MapReduceKernelMultipass(
 #if 1
 			genericCounter = (blockIdx.x * BLOCKSIZE + (threadIdx.x / 32) * WARPSIZE) * epochIterations + (threadIdx.x % 32);
 
-			unsigned predictedDataSize = 0;
+			unsigned predictedDataSize = recordSizes[i];
 			int dataCountSpace1 = 0;
 			for(; (predictedDataSize < epochSizePerThread) && (i < end); i ++)
 			{
@@ -127,10 +127,10 @@ __global__ void MapReduceKernelMultipass(
 				temp.address = (unsigned) recordIndices[i];
 				temp.size = recordSizes[i];
 				(textAddrs + (s * (epochIterations * (blockDim.x / 2) * gridDim.x)))[genericCounter] = *((ptr_t*) &temp);
-				predictedDataSize += temp.size;
+				predictedDataSize += recordSizes[i + 1];
 				genericCounter += 32;
-				if(predictedDataSize <= epochSizePerThread)
-					dataCountSpace1 ++;
+				//if(predictedDataSize <= epochSizePerThread)
+				dataCountSpace1 ++;
 			}
 
 			(firstLastAddrsSpace1 + (s * (blockDim.x / 2) * gridDim.x))[index].itemCount = dataCountSpace1;
@@ -190,7 +190,7 @@ __global__ void MapReduceKernelMultipass(
 				map(recordSizes[i],
 					mbk, states, &stateCounter, myNumbers, epochSuccessStatus,
 					mapData, iCounter, epochSizePerThread);
-				usedDataSize += recordSizes[i];
+				usedDataSize += recordSizes[i + 1];
 				iCounter += recordSizes[i];
 				//The following will make sure each record starts at a new 8-byte aligned location
 				if(iCounter % 8 != 0)
@@ -210,7 +210,7 @@ __global__ void MapReduceKernelMultipass(
 
 		
 	}
-	
+
 }
 
 __device__ inline void map(unsigned recordSize, 
@@ -223,12 +223,14 @@ __device__ inline void map(unsigned recordSize,
 	unsigned length = 0;
 	for(unsigned i = 0; i < recordSize; i ++)
 	{
+
 		char c = data_in_char(i, iCounter, textData, epochSizePerThread);
+		
 #if 1
 		if((c < 'a' || c > 'z') && inWord)
 		{
 			inWord = false;
-			if(length > 5 && length <= WORD_MAX_SIZE)
+			if(length >= 5 && length <= WORD_MAX_SIZE)
 			{
 				//myNumbers[threadIdx.x] = 20;
 				largeInt myValue = 1;
@@ -248,6 +250,16 @@ __device__ inline void map(unsigned recordSize,
 			length ++;
 		}
 #endif
+	}
+
+	if(inWord)
+	{
+		if(length >= 5 && length <= WORD_MAX_SIZE)
+		{
+			largeInt myValue = 1;
+			emit((void*) word, length, (void*) &myValue, sizeof(largeInt), 
+					mbk, states, stateCounter, myNumbers, epochSuccessStatus);
+		}
 	}
 }
 
@@ -376,6 +388,7 @@ void* copyMethodPattern(void* arg)
 					tempDataSpace[storedOffset + m * WARPSIZE] = t;
 				}
 				storedOffset += ((sssize + (COPYSIZE - 1)) / COPYSIZE) * WARPSIZE;
+
 			}
 
 		}
@@ -579,7 +592,7 @@ void partitioner(char* data, unsigned size, unsigned* numRecords, unsigned** rec
 		sizeCounter += estimatedRecordSize + i;
 
 	}
-
+	
 	*numRecords = recordCounter;
 }
 
