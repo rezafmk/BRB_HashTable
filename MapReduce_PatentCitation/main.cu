@@ -9,19 +9,22 @@
 #define MAXREAD 2040109465
 
 #define EPOCHCHUNK 20
-#define DISPLAY_RESULTS
+//#define DISPLAY_RESULTS
 #define NUM_RESULTS_TO_SHOW 20
-#define ESTIMATED_RECORD_SIZE 1024
+#define ESTIMATED_RECORD_SIZE 512
+#define COMPLETE 0
+#define FIRST_ID 1
+#define SECOND_ID 2
 
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 
 __device__ inline void map(unsigned recordSize, 
 		multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, int epochNumber, 
-		char* textData, int iCounter, unsigned epochDataSizePerThread, int index);
+		char* textData, int iCounter, unsigned epochDataSizePerThread, int index, int passno);
 
 __device__ inline void emit(void* key, unsigned keySize, void* value, unsigned valueSize,
-		 multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, int epochNumber, int index);
+		 multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, int epochNumber, int index, int passno);
 
 __device__ inline char data_in_char(int i, int iCounter, char* textData, unsigned epochDataSizePerThread)
 {
@@ -71,7 +74,8 @@ __global__ void MapReduceKernelMultipass(
 				multipassConfig_t* mbk,
 				char* states,
 				unsigned numStates,
-				unsigned epochDataSizePerThread
+				unsigned epochDataSizePerThread,
+				int passno
 				)
 {
 	int index = TID2;
@@ -177,7 +181,7 @@ __global__ void MapReduceKernelMultipass(
 				char* mapData = (char*) ((largeInt) textData + (s * epochDataSizePerThread * (blockDim.x / 2) * gridDim.x));
 				map(recordSizes[i],
 					mbk, states, &stateCounter, myNumbers, j,
-					mapData, iCounter, epochDataSizePerThread, index);
+					mapData, iCounter, epochDataSizePerThread, index, passno);
 				usedDataSize += recordSizes[i + 1];
 				iCounter += recordSizes[i];
 				//The following will make sure each record starts at a new 8-byte aligned location
@@ -198,63 +202,89 @@ __global__ void MapReduceKernelMultipass(
 
 }
 
+__device__ inline int myAtoi(char* p, int size)
+{
+        int k = 0;
+	for(int i = 0; i < size; i ++)
+        {
+                k = (k << 3) + (k << 1) + (p[i]) - '0';
+        }
+
+        return k;
+}
+
+
 __device__ inline void map(unsigned recordSize, 
 		multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, int epochNumber, 
-		char* textData, int iCounter, unsigned epochDataSizePerThread, int index)
+		char* textData, int iCounter, unsigned epochDataSizePerThread, int index, int passno)
 {
-	largeInt tempWord[WORD_MAX_SIZE/sizeof(largeInt)];
-	char* word = (char*) &tempWord[0];
-	bool inWord = false;
-	unsigned length = 0;
+	largeInt tempWord[2];
+	char* firstIdString = (char*) &tempWord[0];
+	char* secondIdString = (char*) &tempWord[1];
+	largeInt firstId, secondId;
+	int length = 0;
+	int state = FIRST_ID;
 	for(unsigned i = 0; i < recordSize; i ++)
 	{
 
 		char c = data_in_char(i, iCounter, textData, epochDataSizePerThread);
 #if 1
-		if((c < 'a' || c > 'z') && inWord)
+		if(state == FIRST_ID)
 		{
-			inWord = false;
-			if(length >= 5 && length <= WORD_MAX_SIZE)
+			if(c != ',')
+				firstIdString[length ++] = c;
+			else
 			{
-				//myNumbers[threadIdx.x] = 20;
-				largeInt myValue = 1;
-				emit((void*) word, length, (void*) &myValue, sizeof(largeInt), 
-					mbk, states, stateCounter, myNumbers, epochNumber, index);
+				firstId = myAtoi(firstIdString, length);
+				length = 0;
+				state = SECOND_ID;
+				i ++; //this is to skip the space after the comma
 			}
 		}
-		else if((c >= 'a' && c <= 'z') && !inWord)
+		else if(state == SECOND_ID)
 		{
-			inWord = true;
-			word[0] = c;
-			length = 1;
+			if(c != '\n')
+				secondIdString[length ++] = c;
+			else
+			{
+				secondId = myAtoi(secondIdString, length);
+				length = 0;
+				state = COMPLETE;
+			}
+			
 		}
-		else if(inWord)
+
+
+		if(state == COMPLETE)
 		{
-			word[length] = c;
-			length ++;
+			state = FIRST_ID;
+			emit((void*) &secondId, sizeof(largeInt), (void*) &firstId, sizeof(largeInt), 
+					mbk, states, stateCounter, myNumbers, epochNumber, index, passno);
 		}
 #endif
 	}
 
+#if 0
 	if(inWord)
 	{
 		if(length >= 5 && length <= WORD_MAX_SIZE)
 		{
 			largeInt myValue = 1;
 			emit((void*) word, length, (void*) &myValue, sizeof(largeInt), 
-					mbk, states, stateCounter, myNumbers, epochNumber, index);
+					mbk, states, stateCounter, myNumbers, epochNumber, index, passno);
 		}
 	}
+#endif
 }
 
 #if 1
 __device__ inline void emit(void* key, unsigned keySize, void* value, unsigned valueSize,
-		 multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, int epochNumber, int index)
+		 multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, int epochNumber, int index, int passno)
 {
 
 	if(states[*stateCounter] == (char) 0)
 	{
-		if(addToHashtable(key, keySize, value, valueSize, mbk) == true)
+		if(addToHashtable(key, keySize, value, valueSize, mbk, passno) == true)
 		{
 			myNumbers[index * 2] += 1;
 			states[*stateCounter] = SUCCEED;
@@ -561,11 +591,11 @@ void partitioner(char* data, unsigned size, unsigned* numRecords, unsigned** rec
 
 		int i = 0;
 		while((sizeCounter + estimatedRecordSize + i) < size && 
-				data[sizeCounter + estimatedRecordSize + i] <= 'z' && 
-				data[sizeCounter + estimatedRecordSize + i] >= 'a')
+				data[sizeCounter + estimatedRecordSize + i] != '\n')
 		{
 			i ++;
 		}
+		i ++;
 
 		(*recordIndices)[recordCounter] = sizeCounter;
 		(*recordSizes)[recordCounter] = estimatedRecordSize + i;
@@ -790,7 +820,8 @@ int main(int argc, char** argv)
 				dmbk,
 				mbk->dstates,
 				numStates,
-				epochDataSizePerThread
+				epochDataSizePerThread,
+				passNo
 				);
 
 
