@@ -9,7 +9,7 @@
 #define MAXREAD 2040109465
 
 #define EPOCHCHUNK 20
-//#define DISPLAY_RESULTS
+#define DISPLAY_RESULTS
 #define NUM_RESULTS_TO_SHOW 20
 #define ESTIMATED_RECORD_SIZE 512
 #define COMPLETE 0
@@ -909,38 +909,34 @@ int main(int argc, char** argv)
 	cudaMemcpy(buckets, mbk->buckets, NUM_BUCKETS * sizeof(hashBucket_t*), cudaMemcpyDeviceToHost);
 
 #ifdef DISPLAY_RESULTS
-	int topScores[NUM_RESULTS_TO_SHOW];
-	int topScoreIds[NUM_RESULTS_TO_SHOW];
-	int topScoreTab[NUM_RESULTS_TO_SHOW];
-	memset(topScores, 0, NUM_RESULTS_TO_SHOW * sizeof(int));
-	memset(topScoreIds, 0, NUM_RESULTS_TO_SHOW * sizeof(int));
-	memset(topScoreTab, 0, NUM_RESULTS_TO_SHOW * sizeof(int));
-
+	printf("Some results: \n");
+	int numResultsToShow = 10;
 	int tabCount = 0;
-	for(int i = 0; i < NUM_BUCKETS; i ++)
+	for(int i = 0; i < NUM_BUCKETS && numResultsToShow > 0; i ++)
 	{
 		hashBucket_t* bucket = buckets[i];
 
 		while(bucket != NULL)
 		{
-			int* value = (int*) getValue(bucket);
-			for(int j = 0; j < NUM_RESULTS_TO_SHOW; j ++)
+			numResultsToShow --;
+			largeInt* secondPatent = (largeInt*) getKey(bucket);
+			printf("%lld: ", *secondPatent);
+			valueHolder_t* valueHolder = bucket->valueHolder;
+			int valueCount = 0;
+			while(valueHolder != NULL)
 			{
-				if(*value > topScores[j])
-				{
-					for(int m = (NUM_RESULTS_TO_SHOW - 1); m >= j && m > 0; m --)
-					{
-						topScores[m] = topScores[m - 1]; //what if m is 0?
-						topScoreIds[m] = topScoreIds[m - 1];
-						topScoreTab[m] = topScoreTab[m - 1];
-					}
-					topScores[j] = *value;
-					topScoreIds[j] = i;
-					topScoreTab[j] = tabCount;
-					break;
-				}
+				valueCount ++;
+				printf("[");
+				largeInt* value = (largeInt*) getValue(valueHolder);
+				printf("%lld", *value);
+				
+				//printf(" DocID: %lld", value->documentId);
+				//void* getValue(value_t* valueHolder)
+				valueHolder = valueHolder->next;
+				printf("] ");
 			}
-			
+			printf("(%d)\n", valueCount);
+
 			bucket = bucket->next;
 
 			tabCount ++;
@@ -948,20 +944,7 @@ int main(int argc, char** argv)
 		tabCount = 0;
 
 	}
-	printf("Top %d scores:\n", NUM_RESULTS_TO_SHOW);
-	for(int i = 0; i < NUM_RESULTS_TO_SHOW; i ++)
-	{
-		hashBucket_t* bucket = buckets[topScoreIds[i]];
-		for(int j = 0; j < topScoreTab[i]; j ++)
-			bucket = bucket->next;
-
-		printf("ID: %d, ", topScoreIds[i]);
-		char* word = (char*) getKey(bucket);
-		int* value = (int*) getValue(bucket);
-		for(int j = 0; j < bucket->keySize; j ++)
-			printf("%c", word[j]);
-		printf(": %d\n", *value);
-	}
+	printf("\n");
 #endif
 
 	int totalDepth = 0;

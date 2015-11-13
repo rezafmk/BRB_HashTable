@@ -22,7 +22,7 @@ void hashtableInit(unsigned numBuckets, multipassConfig_t* mbk, unsigned groupSi
 __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
 {
         unsigned hash = 2166136261;
-        unsigned FNVMultiple = 16777619;
+        //unsigned FNVMultiple = 16777619;
 
 	hash = (unsigned) *((largeInt*) str);
 	
