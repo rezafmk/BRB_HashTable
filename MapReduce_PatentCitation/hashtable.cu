@@ -209,7 +209,7 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	mbk->numRecords = numRecords;
 
 
-	mbk->availableGPUMemory = (340 * (1 << 20));
+	mbk->availableGPUMemory = (440 * (1 << 20));
 	mbk->hhashTableBufferSize = MAX_NO_PASSES * mbk->availableGPUMemory;
 	mbk->hhashTableBaseAddr = malloc(mbk->hhashTableBufferSize);
 	memset(mbk->hhashTableBaseAddr, 0, mbk->hhashTableBufferSize);
@@ -241,6 +241,8 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	
 	printf("@INFO: transferring config structs to GPU memory\n");
 
+	
+	printf("@INFO: Allocating %luMB for states\n", (mbk->numRecords * sizeof(char)) / (1 << 20));
 	cudaMalloc((void**) &(mbk->dstates), mbk->numRecords * sizeof(char));
 	cudaMemset(mbk->dstates, 0, mbk->numRecords * sizeof(char));
 

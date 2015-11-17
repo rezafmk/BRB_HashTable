@@ -115,14 +115,16 @@ __global__ void MapReduceKernelMultipass(
 	{
 		__syncthreads();
 		reloop = false;
-		if((prediction && j < epochNum && mbk->depochSuccessStatus[j] == (char) 1) || (!prediction && j > 1 && mbk->depochSuccessStatus[j - 2] == (char) 1))
+#if 0
+		if((prediction && j < epochNum && mbk->depochSuccessStatus[j] == (char) SUCCEED) || (!prediction && j > 1 && mbk->depochSuccessStatus[j - 2] == (char) SUCCEED))
 		{
-			i += numRecords;
+			i += epochDataSizePerThread;
 			continue;
 		}
+#endif
 
 		//lala
-		if(prediction && j < epochNum)
+		if(prediction)
 		{
 			genericCounter = (blockIdx.x * BLOCKSIZE + (threadIdx.x / 32) * WARPSIZE) * epochIterations + (threadIdx.x % 32);
 
@@ -145,14 +147,14 @@ __global__ void MapReduceKernelMultipass(
 		if(prediction)
 			asm volatile("bar.sync %0, %1;" ::"r"(4), "r"(blockDim.x / 2)); 
 
-		if(threadIdx.x == 0 && j < epochNum)
+		if(threadIdx.x == 0)
 		{
 			flagGPU[s] *= -1;
 			completeFlag[blockIdx.x * 12 + s * 2] = flagGPU[s];
 			__threadfence_system();
 		}
 	
-		if(prediction && j < epochNum)
+		if(prediction)
 			s = (s + 1) % 3;
 
 		if(!prediction && threadIdx.x == BLOCKSIZE && j > 1)
