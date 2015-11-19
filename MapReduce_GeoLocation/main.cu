@@ -12,10 +12,11 @@
 #define DISPLAY_RESULTS
 #define NUM_RESULTS_TO_SHOW 20
 #define ESTIMATED_RECORD_SIZE 512
-#define COMPLETE 0
-#define FIRST_ID 1
-#define SECOND_ID 2
+#define FIRST_FIELD 0
+#define SECOND_FIELD 1
+#define THIRD_FIELD 2
 
+#define MAX_ARTICLE_NAME_SIZE 64
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 
@@ -228,51 +229,56 @@ __device__ inline void map(unsigned recordSize,
 		multipassConfig_t* mbk, char* states, unsigned* stateCounter, int* myNumbers, int epochNumber, 
 		char* textData, int iCounter, unsigned epochDataSizePerThread, int index, int passno)
 {
-	largeInt tempWord[2];
-	char* firstIdString = (char*) &tempWord[0];
-	char* secondIdString = (char*) &tempWord[1];
-	largeInt firstId, secondId;
+	
+	largeInt tempWord[MAX_ARTICLE_NAME_SIZE / sizeof(largeInt)];
+	char* articleName = (char*) tempWord;
+	char locationString[16];
+
 	int length = 0;
-	int state = FIRST_ID;
+	int length2 = 0;
+	int state = FIRST_FIELD;
 	for(unsigned i = 0; i < recordSize; i ++)
 	{
 
 		char c = data_in_char(i, iCounter, textData, epochDataSizePerThread);
 
-		if(state == FIRST_ID)
+		switch(state)
 		{
-			if(c != ',')
-				firstIdString[length ++] = c;
-			else
-			{
-				firstId = myAtoi(firstIdString, length);
-				length = 0;
-				state = SECOND_ID;
-				i ++; //this is to skip the space after the comma
-			}
-		}
-		else if(state == SECOND_ID)
-		{
-			if(c != '\n')
-				secondIdString[length ++] = c;
-			else
-			{
-				secondId = myAtoi(secondIdString, length);
-				length = 0;
-				state = COMPLETE;
-			}
-			
+			case FIRST_FIELD:
+				if(c != '\t')
+				{
+					if(length < MAX_ARTICLE_NAME_SIZE)
+						articleName[length ++] = c;
+				}
+				else
+				{
+					state = SECOND_FIELD;
+				}
+				break;
+
+			case SECOND_FIELD:
+				if(c == '\t')
+					state = THIRD_FIELD;
+				break;
+
+			case THIRD_FIELD:
+				if(c != '\n')
+				{
+					locationString[length2 ++] = c;
+				}
+				else
+				{
+					emit((void*) locationString, length2, (void*) articleName, length, 
+							mbk, states, stateCounter, myNumbers, epochNumber, index, passno);
+
+					state = FIRST_FIELD;
+					length = 0;
+					length2 = 0;
+				}
+				break;
 		}
 
-
-		if(state == COMPLETE)
-		{
-			state = FIRST_ID;
-			emit((void*) &secondId, sizeof(largeInt), (void*) &firstId, sizeof(largeInt), 
-					mbk, states, stateCounter, myNumbers, epochNumber, index, passno);
-		}
 	}
-
 }
 
 #if 1
@@ -917,17 +923,20 @@ int main(int argc, char** argv)
 		while(bucket != NULL)
 		{
 			numResultsToShow --;
-			largeInt* secondPatent = (largeInt*) getKey(bucket);
-			printf("%lld: ", *secondPatent);
+			char* location = (char*) getKey(bucket);
+			for(int j = 0; j < bucket->keySize; j ++)
+				printf("%c", location[j]);
+			
 			valueHolder_t* valueHolder = bucket->valueHolder;
 			int valueCount = 0;
 			while(valueHolder != NULL)
 			{
 				valueCount ++;
 				printf("[");
-				largeInt* value = (largeInt*) getValue(valueHolder);
-				printf("%lld", *value);
-				
+				char* value = (char*) getValue(valueHolder);
+				for(int j = 0; j < valueHolder->valueSize; j ++)
+					printf("%c", value[j]);
+
 				//printf(" DocID: %lld", value->documentId);
 				//void* getValue(value_t* valueHolder)
 				valueHolder = valueHolder->next;
