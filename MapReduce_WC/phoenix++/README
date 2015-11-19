@@ -1,33 +1,19 @@
-Phoenix Project
-Wordcount Example Application Readme
-Last revised May 15, 2011
+Multipass Hash project for BigKernel
+Application: Wikipedia GeoLocation
+Last revised Nov 18, 2015
 
 
 1. Application Overview
 -----------------------
 
-The Wordcount application counts the frequency of occurence of each unique word
-in a text document.
+The Wikipedia GeoLocation application groups articles in Wikipedia by their Geo Location
 
 
 2. Provided Files
 -----------------
 
-word_count.cpp: The application
+main.cu: The application
 Makefile: Compiles the application
-datafiles/*.txt: Sample text files of varying sizes that can be used as 
-                 input to this application (download from the website)
-README: This file
-
-
-3. Running the Application
---------------------------
-
-Run 'make' to compile the application. 
-
-./word_count <text_file>
-
-runs the application.
 
 
 End File

@@ -238,7 +238,7 @@ __device__ inline void map(unsigned recordSize,
 	{
 
 		char c = data_in_char(i, iCounter, textData, epochDataSizePerThread);
-#if 1
+
 		if(state == FIRST_ID)
 		{
 			if(c != ',')
@@ -271,20 +271,8 @@ __device__ inline void map(unsigned recordSize,
 			emit((void*) &secondId, sizeof(largeInt), (void*) &firstId, sizeof(largeInt), 
 					mbk, states, stateCounter, myNumbers, epochNumber, index, passno);
 		}
-#endif
 	}
 
-#if 0
-	if(inWord)
-	{
-		if(length >= 5 && length <= WORD_MAX_SIZE)
-		{
-			largeInt myValue = 1;
-			emit((void*) word, length, (void*) &myValue, sizeof(largeInt), 
-					mbk, states, stateCounter, myNumbers, epochNumber, index, passno);
-		}
-	}
-#endif
 }
 
 #if 1
@@ -784,7 +772,7 @@ int main(int argc, char** argv)
 	
 	//============ initializing the hash table and page table ==================//
 	int pagePerGroup = 50;
-	int numStates = numRecords * (ESTIMATED_RECORD_SIZE / 4); //conservatively, assumeing 4-byte per words
+	int numStates = numRecords * (ESTIMATED_RECORD_SIZE / 15); //conservatively, assumeing 15 characters per record
 	multipassConfig_t* mbk = initMultipassBookkeeping(	(int*) hostCompleteFlag, 
 								gpuFlags, 
 								flagSize,
