@@ -8,7 +8,7 @@
 
 #define MAXREAD 2040109465
 
-#define EPOCHCHUNK 20
+#define EPOCHCHUNK 15
 #define DISPLAY_RESULTS
 #define NUM_RESULTS_TO_SHOW 20
 #define ESTIMATED_RECORD_SIZE 1024
@@ -111,11 +111,13 @@ __global__ void MapReduceKernelMultipass(
 	{
 		__syncthreads();
 		reloop = false;
+#if 0
 		if((prediction && j < epochNum && mbk->depochSuccessStatus[j] == (char) 1) || (!prediction && j > 1 && mbk->depochSuccessStatus[j - 2] == (char) 1))
 		{
 			i += numRecords;
 			continue;
 		}
+#endif
 
 		//lala
 		if(prediction && j < epochNum)
@@ -214,7 +216,7 @@ __device__ inline void map(unsigned recordSize,
 		if((c < 'a' || c > 'z') && inWord)
 		{
 			inWord = false;
-			if(length >= 5 && length <= WORD_MAX_SIZE)
+			if(length >= 4 && length <= WORD_MAX_SIZE)
 			{
 				//myNumbers[threadIdx.x] = 20;
 				largeInt myValue = 1;
@@ -961,6 +963,7 @@ int main(int argc, char** argv)
 	printf("Empty percentage: %0.1f\n", emptyPercentage);
 	printf("Average depth: %0.1f\n", averageDepth);
 	printf("Max depth: %d\n", maximumDepth);
+	printf("Total valid buckets: %d\n", totalValidBuckets);
 
 	return 0;
 }
