@@ -6,6 +6,7 @@ void initPaging(largeInt availableGPUMemory, multipassConfig_t* mbk)
 	mbk->totalNumPages = availableGPUMemory / PAGE_SIZE;
 	printf("@INFO: total number of pages: %d [each %dKB]\n", mbk->totalNumPages, (PAGE_SIZE / (1 << 10)));
 	mbk->initialPageAssignedCounter = 0;
+	mbk->keyPageCounter = 0;
 	mbk->totalNumFreePages = mbk->totalNumPages;
 	mbk->hfreeListId = (int*) malloc(mbk->totalNumPages * sizeof(int));
 	for(int i = 0; i < mbk->totalNumPages; i ++)
@@ -75,7 +76,7 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, multipas
 				}
 			}
 			
-			newPage = allocateNewPage(mbk);
+			newPage = allocateNewPage(mbk, 1);
 
 			//If no more page exists and no page is used yet (for this bucketgroup), don't do anything
 			if(newPage == NULL)
@@ -141,7 +142,7 @@ __device__ void* multipassMallocValue(unsigned size, bucketGroup_t* myGroup, mul
 				}
 			}
 			
-			newPage = allocateNewPage(mbk);
+			newPage = allocateNewPage(mbk, 0);
 
 			//If no more page exists and no page is used yet (for this bucketgroup), don't do anything
 			if(newPage == NULL)
@@ -171,8 +172,15 @@ __device__ void* multipassMallocValue(unsigned size, bucketGroup_t* myGroup, mul
 	}
 }
 
-__device__ page_t* allocateNewPage(multipassConfig_t* mbk)
+__device__ page_t* allocateNewPage(multipassConfig_t* mbk, int isKeyPage)
 {
+	if(isKeyPage == 1)
+	{
+		if(mbk->keyPageCounter > (mbk->totalNumFreePages / 2))
+			return NULL;
+		mbk->keyPageCounter ++;
+		
+	}
 	int indexToAllocate = atomicInc((unsigned*) &(mbk->initialPageAssignedCounter), INT_MAX);
 	if(indexToAllocate < mbk->totalNumFreePages)
 	{

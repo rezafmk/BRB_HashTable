@@ -87,7 +87,7 @@ print "Number of total records: " + str(numRecords)
 
 listOfLocations = []
 for x in xrange(numUniqueLocations):
-	location = str(random_number(0, 1000)) + " " + str(random_number(0, 1000)) + " "
+	location = str(random_number(0, 10000)) + " " + str(random_number(0, 10000)) + " "
 	listOfLocations.append(location)
 	
 	

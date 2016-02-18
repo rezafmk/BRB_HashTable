@@ -218,7 +218,7 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	mbk->numRecords = numRecords;
 
 
-	mbk->availableGPUMemory = (440 * (1 << 20));
+	mbk->availableGPUMemory = (840 * (1 << 20));
 	mbk->hhashTableBufferSize = MAX_NO_PASSES * mbk->availableGPUMemory;
 	mbk->hhashTableBaseAddr = malloc(mbk->hhashTableBufferSize);
 	memset(mbk->hhashTableBaseAddr, 0, mbk->hhashTableBufferSize);
@@ -319,6 +319,8 @@ bool checkAndResetPass(multipassConfig_t* mbk, multipassConfig_t* dmbk)
 	int freeListCounter = 0;
 	int neededCounter = 0;
 	int unneededCounter = 0;
+	// Reseting the key page counter
+	mbk->keyPageCounter = 0;
 	for(int i = 0; i < mbk->totalNumPages; i ++)
 	{
 		if(mbk->hpages[i].needed == 0)
@@ -338,6 +340,7 @@ bool checkAndResetPass(multipassConfig_t* mbk, multipassConfig_t* dmbk)
 			mbk->hpages[i].needed = 0;
 			//printf("Page %d is needed..\n", i);
 			neededCounter ++;
+			mbk->keyPageCounter ++;
 		}
 	}
 

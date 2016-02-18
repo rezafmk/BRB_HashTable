@@ -129,6 +129,7 @@ typedef struct
 
 	int initialPageAssignedCounter;
 	int initialPageAssignedCap;
+	int keyPageCounter;
 	//===========================//
 
 	unsigned numGroups;
@@ -144,7 +145,7 @@ typedef struct
 void initPaging(largeInt availableGPUMemory, multipassConfig_t* mbk);
 __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, multipassConfig_t* mbk);
 __device__ void* multipassMallocValue(unsigned size, bucketGroup_t* myGroup, multipassConfig_t* mbk);
-__device__ page_t* allocateNewPage(multipassConfig_t* mbk);
+__device__ page_t* allocateNewPage(multipassConfig_t* mbk, int isKeyPage);
 
 
 void hashtableInit(unsigned numBuckets, multipassConfig_t* mbk, unsigned groupSize);
