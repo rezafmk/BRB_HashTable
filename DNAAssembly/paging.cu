@@ -9,14 +9,8 @@ void initPaging(largeInt availableGPUMemory, multipassConfig_t* mbk)
 	mbk->initialPageAssignedCounter = 0;
 	mbk->initialPageAssignedCap = mbk->totalNumPages;
 
-	void* tempDbuffer = malloc(mbk->totalNumPages * PAGE_SIZE + MEMORY_ALIGNMENT);
-	void* dbuffer  = (void*) ALIGN_UP(tempDbuffer, MEMORY_ALIGNMENT);
-	memset((void*) dbuffer, 0, mbk->totalNumPages * PAGE_SIZE);
-	cudaHostRegister((void*) dbuffer, mbk->totalNumPages * PAGE_SIZE, CU_MEMHOSTALLOC_DEVICEMAP);
-	cudaHostGetDevicePointer((void **)&mbk->dbuffer, (void *)dbuffer, 0);
-
-	//cudaMalloc((void**) &(mbk->dbuffer), mbk->totalNumPages * PAGE_SIZE);
-	//cudaMemset(mbk->dbuffer, 0, mbk->totalNumPages * PAGE_SIZE);
+	cudaMalloc((void**) &(mbk->dbuffer), mbk->totalNumPages * PAGE_SIZE);
+	cudaMemset(mbk->dbuffer, 0, mbk->totalNumPages * PAGE_SIZE);
 	printf("@INFO: done allocating base buffer in GPU memory\n");
 
 	//This has to be allocated GPU-side
