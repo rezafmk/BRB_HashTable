@@ -115,7 +115,7 @@ __global__ void MapReduceKernelMultipass(
 	{
 		__syncthreads();
 		reloop = false;
-#if 1
+#if 0
 		if((prediction && mbk->depochSuccessStatus[j] == (char) SUCCEED))
 		{
 			i += mbk->depochSizes[(numThreads * 2) * j + index];//epochDataSizePerThread;
@@ -146,7 +146,7 @@ __global__ void MapReduceKernelMultipass(
 				dataCountSpace1 ++;
 			}
 			
-			mbk->depochSizes[(numThreads * 2) * j + index] = dataCountSpace1;
+			//mbk->depochSizes[(numThreads * 2) * j + index] = dataCountSpace1;
 			(firstLastAddrsSpace1 + (s * (blockDim.x / 2) * gridDim.x))[index].itemCount = dataCountSpace1;
 		}
 
@@ -197,7 +197,7 @@ __global__ void MapReduceKernelMultipass(
 				if(iCounter % 8 != 0)
 					iCounter += (8 - (iCounter % 8));
 			}
-			mbk->depochSizes[(numThreads * 2) * (j - 2) + index + BLOCKSIZE] = iterations;
+			//mbk->depochSizes[(numThreads * 2) * (j - 2) + index + BLOCKSIZE] = iterations;
 
 			s = (s + 1) % 3;
 		}
