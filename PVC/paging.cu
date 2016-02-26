@@ -44,56 +44,66 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, multipas
 		}
 	}
 
-	page_t* newPage = NULL;
-	//acquire some lock
-	unsigned oldLock = 1;
+	page_t* newPage;
 	do
 	{
-		oldLock = atomicExch(&(myGroup->pageLock), 1);
-
-		if(oldLock == 0)
+		newPage = NULL;
+		//acquire some lock
+		unsigned oldLock = 1;
+		do
 		{
-			//Re-testing if the parent page has room (because the partenPage might have changed)
-			parentPage = myGroup->parentPage;
-			if(parentPage != NULL)
+			oldLock = atomicExch(&(myGroup->pageLock), 1);
+
+			if(oldLock == 0)
 			{
-				oldUsed = atomicAdd(&(parentPage->used), size);
-				if((oldUsed + size) < PAGE_SIZE)
+				//Re-testing if the parent page has room (because the partenPage might have changed)
+				parentPage = myGroup->parentPage;
+				if(parentPage != NULL)
 				{
-					//Unlocking
-					atomicExch(&(myGroup->pageLock), 0);
-					return (void*) ((largeInt) mbk->dbuffer + parentPage->id * PAGE_SIZE + oldUsed);
+					oldUsed = atomicAdd(&(parentPage->used), size);
+					if((oldUsed + size) < PAGE_SIZE)
+					{
+						//Unlocking
+						atomicExch(&(myGroup->pageLock), 0);
+						return (void*) ((largeInt) mbk->dbuffer + parentPage->id * PAGE_SIZE + oldUsed);
+					}
 				}
-			}
-			
-			newPage = allocateNewPage(mbk, groupNo);
 
-			//If no more page exists and no page is used yet (for this bucketgroup), don't do anything
-			if(newPage == NULL)
-			{
-				//releaseLock
+				newPage = allocateNewPage(mbk, groupNo);
+
+				//If no more page exists and no page is used yet (for this bucketgroup), don't do anything
+				if(newPage == NULL)
+				{
+					//releaseLock
+					atomicExch(&(myGroup->pageLock), 0);
+					return NULL;
+				}
+
+				newPage->next = parentPage;
+				myGroup->parentPage = newPage;
+
+				//Unlocking
 				atomicExch(&(myGroup->pageLock), 0);
-				return NULL;
 			}
 
-			newPage->next = parentPage;
-			myGroup->parentPage = newPage;
+		} while(oldLock == 1);
 
-			//Unlocking
-			atomicExch(&(myGroup->pageLock), 0);
-		}
+		//This assumes that the newPage is not already full, which is to be tested.
+		oldUsed = atomicAdd(&(newPage->used), size);
 
-	} while(oldLock == 1);
 
-	//This assumes that the newPage is not already full, which is to be tested.
-	oldUsed = atomicAdd(&(newPage->used), size);
+	} while((oldUsed + size) >= PAGE_SIZE);
 
+	return (void*) ((largeInt) mbk->dbuffer + oldUsed + newPage->id * PAGE_SIZE);
+
+#if 0
 	if((oldUsed + size) < PAGE_SIZE)
 		return (void*) ((largeInt) mbk->dbuffer + oldUsed + newPage->id * PAGE_SIZE);
 	else
 	{
 		return NULL;
 	}
+#endif
 }
 
 __device__ page_t* allocateNewPage(multipassConfig_t* mbk, int groupNo)

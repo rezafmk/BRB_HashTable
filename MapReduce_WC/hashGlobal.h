@@ -8,7 +8,7 @@
 #include <sys/time.h>
 
 #define PAGE_SIZE (1 << 18)
-#define NUM_BUCKETS 10000000
+#define NUM_BUCKETS 1000000
 #define ALIGNMET 8
 #define MAX_NO_PASSES 4
 

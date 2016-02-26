@@ -223,7 +223,7 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	mbk->numRecords = numRecords;
 
 
-	mbk->availableGPUMemory = (625 * (1 << 20));
+	mbk->availableGPUMemory = (675 * (1 << 20));
 	mbk->hhashTableBufferSize = MAX_NO_PASSES * mbk->availableGPUMemory;
 	mbk->hhashTableBaseAddr = malloc(mbk->hhashTableBufferSize);
 	memset(mbk->hhashTableBaseAddr, 0, mbk->hhashTableBufferSize);
@@ -231,7 +231,7 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	//This is how we decide the number of groups: based on the number of available pages, we make sure 
 	//group size is calculated in a way that a given number of `pagePerGroup` pages are assigned to each group
 	int availableNumPages = mbk->availableGPUMemory / PAGE_SIZE;
-	mbk->groupSize = (pagePerGroup * NUM_BUCKETS) / availableNumPages;
+	mbk->groupSize = NUM_BUCKETS / 4;//(pagePerGroup * NUM_BUCKETS) / availableNumPages;
 	mbk->numGroups = (NUM_BUCKETS + (mbk->groupSize - 1)) / mbk->groupSize;
 	//mbk->numGroups = (NUM_BUCKETS + (GROUP_SIZE - 1)) / GROUP_SIZE;
 	printf("############# groupSize: %d, number of groups: %d\n", mbk->groupSize, mbk->numGroups);
