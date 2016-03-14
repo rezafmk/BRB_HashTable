@@ -47,6 +47,22 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 		char* oldKey = (char*) ((largeInt) bucket + sizeof(hashBucket_t));
 		bool success = true;
 		//OPTIMIZE: do the comparisons 8-byte by 8-byte
+#if 1
+		int i = 0;
+		for(; i < keySize/ALIGNMET && success; i ++)
+		{
+			if(((largeInt*) oldKey)[i] != ((largeInt*) key)[i])
+				success = false;
+		}
+		i *= ALIGNMET;
+		for(; i < keySize && success; i ++)
+		{
+			if(oldKey[i] != ((char*) key)[i])
+				success = false;
+		}
+#endif
+#if 0
+
 		for(int i = 0; i < keySize; i ++)
 		{
 			if(oldKey[i] != ((char*) key)[i])
@@ -55,6 +71,7 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 				break;
 			}
 		}
+#endif
 		if(success)
 			break;
 
@@ -223,7 +240,7 @@ multipassConfig_t* initMultipassBookkeeping(int* hostCompleteFlag,
 	mbk->numRecords = numRecords;
 
 
-	mbk->availableGPUMemory = (400 * (1 << 20));
+	mbk->availableGPUMemory = (500 * (1 << 20));
 	mbk->hhashTableBufferSize = MAX_NO_PASSES * mbk->availableGPUMemory;
 	mbk->hhashTableBaseAddr = malloc(mbk->hhashTableBufferSize);
 	memset(mbk->hhashTableBaseAddr, 0, mbk->hhashTableBufferSize);

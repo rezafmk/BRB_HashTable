@@ -13,7 +13,8 @@
 
 
 
-__global__ void kernel(	input_t* data,
+
+__global__ void insert_kernel(	input_t* data,
 			unsigned size,
 			unsigned numThreads,
 			multipassConfig_t* mbk,
@@ -29,8 +30,8 @@ __global__ void kernel(	input_t* data,
 	{
 		int sizeIdentifier = (i / numThreads) % 16;
 		int keySize = 8 + sizeIdentifier * 8;
-#if 1
-		if(addToHashtable((void*) &(data[i]), keySize, (void*) &value, keySize, mbk) == true)
+
+		if(insert_basic((void*) &(data[i]), keySize, (void*) &value, keySize, mbk) == true)
 		{
 			myNumbers[index * 2] ++;
 			//states[i] = SUCCEED;
@@ -39,7 +40,37 @@ __global__ void kernel(	input_t* data,
 		{
 			myNumbers[index * 2 + 1] ++;
 		}
-#endif
+
+	}
+	//printf("%lld\n", sum);
+}
+
+__global__ void lookup_kernel(	input_t* data,
+			unsigned size,
+			unsigned numThreads,
+			multipassConfig_t* mbk,
+			char* states)
+{
+	int index = TID;
+	int* myNumbers = mbk->dmyNumbers;
+	input_t value;
+	value.data1 = 1;
+	largeInt sum = 0;
+
+	for(unsigned i = index; i < size; i += numThreads)
+	{
+		int sizeIdentifier = (i / numThreads) % 16;
+		int keySize = 8 + sizeIdentifier * 8;
+
+		if(lookup_basic((void*) &(data[i]), keySize, mbk) != NULL)
+		{
+			myNumbers[index * 2] ++;
+			//states[i] = SUCCEED;
+		}
+		else
+		{
+			myNumbers[index * 2 + 1] ++;
+		}
 
 	}
 	//printf("%lld\n", sum);
@@ -64,8 +95,7 @@ int main(int argc, char** argv)
 	
 	srand(time(NULL));
 	for(unsigned i = 0; i < inputDataSize; i ++)
-		inputData[i].data1 = rand() % (inputDataSize * 3);
-
+		inputData[i].data1 = rand() % (inputDataSize * 2);
 
 
 	input_t* dinputData;
@@ -76,8 +106,6 @@ int main(int argc, char** argv)
 	dim3 grid(16, 1, 1);
 	dim3 block(384, 1, 1);
 	int numThreads = block.x * grid.x * grid.y;
-	
-
 
 	//============ initializing the hash table and page table ==================//
 	int pagePerGroup = 25;
@@ -103,7 +131,7 @@ int main(int argc, char** argv)
 
 	gettimeofday(&partial_start, NULL);
 
-	kernel<<<grid, block>>>(dinputData, 
+	insert_kernel<<<grid, block>>>(dinputData, 
 				inputDataSize, 
 				numThreads,
 				dmbk,
@@ -114,11 +142,31 @@ int main(int argc, char** argv)
 	sec = partial_end.tv_sec - partial_start.tv_sec;
 	ms = partial_end.tv_usec - partial_start.tv_usec;
 	diff = sec * 1000000 + ms;
-	printf("\n%10s:\t\t%0.1fms\n", "Total time", (double)((double)diff/1000.0));
+	printf("\n%10s:\t\t%0.1fms\n", "Insert total time", (double)((double)diff/1000.0));
 
 
 	errR = cudaGetLastError();
 	printf("Error after calling the kernel is: %s\n", cudaGetErrorString(errR));
+
+
+	cudaMemset(mbk->dmyNumbers, 0, 2 * numThreads * sizeof(int));
+
+	gettimeofday(&partial_start, NULL);
+
+	lookup_kernel<<<grid, block>>>(dinputData, 
+				inputDataSize, 
+				numThreads,
+				dmbk,
+				mbk->dstates);
+	cudaThreadSynchronize();
+
+	gettimeofday(&partial_end, NULL);
+	sec = partial_end.tv_sec - partial_start.tv_sec;
+	ms = partial_end.tv_usec - partial_start.tv_usec;
+	diff = sec * 1000000 + ms;
+	printf("\n%10s:\t\t%0.1fms\n", "Lookup total time", (double)((double)diff/1000.0));
+
+
 
 
 	int* dmyNumbers = mbk->dmyNumbers;
@@ -144,6 +192,7 @@ int main(int argc, char** argv)
 	cudaMemcpy(buckets, mbk->buckets, NUM_BUCKETS * sizeof(hashBucket_t*), cudaMemcpyDeviceToHost);
 	
 
+#if 1
 	int totalDepth = 0;
 	int totalValidBuckets = 0;
 	int totalEmpty = 0;
@@ -172,6 +221,8 @@ int main(int argc, char** argv)
 	printf("Empty percentage: %0.1f\n", emptyPercentage);
 	printf("Average depth: %0.1f\n", averageDepth);
 	printf("Max depth: %d\n", maximumDepth);
+
+#endif
 
 	return 0;
 }
