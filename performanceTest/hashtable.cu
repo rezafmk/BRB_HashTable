@@ -49,15 +49,21 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 	{
 		char* oldKey = (char*) ((largeInt) bucket + sizeof(hashBucket_t));
 		bool success = true;
-		//OPTIMIZE: do the comparisons 8-byte by 8-byte
-		for(int i = 0; i < keySize; i ++)
+
+		int i = 0;
+		for(; i < keySize/ALIGNMET && success; i ++)
+		{
+			if(((largeInt*) oldKey)[i] != ((largeInt*) key)[i])
+				success = false;
+		}
+		i *= ALIGNMET;
+		for(; i < keySize && success; i ++)
 		{
 			if(oldKey[i] != ((char*) key)[i])
-			{
 				success = false;
-				break;
-			}
 		}
+
+
 		if(success)
 			break;
 
@@ -68,6 +74,106 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 	}
 
 	return bucket;
+}
+
+__device__ bool insert_multi_value(void* key, int keySize, void* value, int valueSize, multipassConfig_t* mbk)
+{
+	bool success = true;
+	unsigned hashValue = hashFunc((char*) key, keySize, mbk->numBuckets);
+
+	unsigned groupNo = hashValue / mbk->groupSize;
+	//unsigned groupNo = hashValue / GROUP_SIZE;
+
+	bucketGroup_t* group = &(mbk->groups[groupNo]);
+	
+	hashBucket_t* existingBucket;
+
+	int keySizeAligned = (keySize % ALIGNMET == 0)? keySize : keySize + (ALIGNMET - (keySize % ALIGNMET));
+	int valueSizeAligned = (valueSize % ALIGNMET == 0)? valueSize : valueSize + (ALIGNMET - (valueSize % ALIGNMET));
+
+	unsigned oldLock = 1;
+
+	do
+	{
+		oldLock = atomicExch((unsigned*) &(mbk->locks[hashValue]), 1);
+
+		if(oldLock == 0)
+		{
+			hashBucket_t* dbucket = mbk->dbuckets[hashValue];
+			hashBucket_t* hbucket = mbk->buckets[hashValue];
+
+			//First see if the key already exists in one of the entries of this bucket
+			//The returned bucket is the 'entry' in which the key exists
+			if(mbk->isNextDeads[hashValue] != 1 && (existingBucket = containsKey(dbucket, key, keySize, mbk)) != NULL)
+			{
+				void* oldValue = (void*) ((largeInt) existingBucket + sizeof(hashBucket_t) + keySizeAligned);
+				if(!resolveSameKeyAddition(key, value, valueSizeAligned, oldValue, group, mbk))
+				{
+					group->needed = 1;
+					page_t* temp = group->parentPage;
+					while(temp != NULL)
+					{
+						temp->needed = 1;
+						temp = temp->next;
+					}
+					success = false;
+				}
+			}
+			else
+			{
+				hashBucket_t* newBucket = (hashBucket_t*) multipassMalloc(sizeof(hashBucket_t) + keySizeAligned + sizeof(valueHolder_t) + valueSizeAligned, group, mbk);
+				if(newBucket != NULL)
+				{
+					//TODO reduce the base offset if not null
+					//newBucket->next = (bucket == NULL)? NULL : (hashBucket_t*) ((largeInt) bucket - (largeInt) mbk->dbuffer);
+					newBucket->dnext = NULL;
+					newBucket->next = NULL;
+					if(dbucket != NULL)
+					{
+						newBucket->dnext = dbucket;
+						newBucket->next = hbucket;
+					}
+
+					if(mbk->isNextDeads[hashValue] == 1)
+						newBucket->isNextDead = 1;
+					newBucket->keySize = (short) keySize;
+					newBucket->valueSize = (short) valueSize;
+					newBucket->dvalueHolder = (valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned);
+					newBucket->valueHolder = (valueHolder_t*) ((largeInt) newBucket->dvalueHolder - (largeInt) mbk->dbuffer + group->parentPage->hashTableOffset);;
+
+					mbk->dbuckets[hashValue] = newBucket;
+					mbk->buckets[hashValue] = (hashBucket_t*) ((largeInt) newBucket - (largeInt) mbk->dbuffer + group->parentPage->hashTableOffset);
+
+					mbk->isNextDeads[hashValue] = 0;
+
+					//TODO: this assumes that input key is aligned by ALIGNMENT, which is not a safe assumption
+					for(int i = 0; i < (keySizeAligned / ALIGNMET); i ++)
+						*((largeInt*) ((largeInt) newBucket + sizeof(hashBucket_t) + i * ALIGNMET)) = *((largeInt*) ((largeInt) key + i * ALIGNMET));
+					setValue(newBucket->dvalueHolder, value, valueSizeAligned);
+					newBucket->dvalueHolder->next = NULL;
+					newBucket->dvalueHolder->dnext = NULL;
+					newBucket->dvalueHolder->valueSize = (largeInt) valueSize;
+					
+#if 1
+					for(int i = 0; i < (valueSizeAligned / ALIGNMET); i ++)
+						*((largeInt*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned + sizeof(valueHolder_t) + i * ALIGNMET)) = *((largeInt*) ((largeInt) value + i * ALIGNMET));
+					((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->next = NULL;
+					((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->dnext = NULL;
+					((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->valueSize = valueSize;
+#endif
+					
+				}
+				else
+				{
+					success = false;
+				}
+			}
+
+			atomicExch((unsigned*) &(mbk->locks[hashValue]), 0);
+		}
+	} while(oldLock == 1);
+
+	return success;
 }
 
 
@@ -188,7 +294,7 @@ multipassConfig_t* initMultipassBookkeeping(	int numThreads,
 	mbk->numRecords = numRecords;
 
 
-	mbk->availableGPUMemory = (1300 * (1 << 20));
+	mbk->availableGPUMemory = (1800 * (1 << 20));
 	mbk->hhashTableBufferSize = MAX_NO_PASSES * mbk->availableGPUMemory;
 	mbk->hhashTableBaseAddr = malloc(mbk->hhashTableBufferSize);
 	memset(mbk->hhashTableBaseAddr, 0, mbk->hhashTableBufferSize);

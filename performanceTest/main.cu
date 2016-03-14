@@ -11,6 +11,7 @@
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 
+#define MULTI_VALUE 1
 
 
 
@@ -24,7 +25,6 @@ __global__ void insert_kernel(	input_t* data,
 	int* myNumbers = mbk->dmyNumbers;
 	input_t value;
 	value.data1 = 1;
-	largeInt sum = 0;
 
 	for(unsigned i = index; i < size; i += numThreads)
 	{
@@ -55,7 +55,6 @@ __global__ void lookup_kernel(	input_t* data,
 	int* myNumbers = mbk->dmyNumbers;
 	input_t value;
 	value.data1 = 1;
-	largeInt sum = 0;
 
 	for(unsigned i = index; i < size; i += numThreads)
 	{
@@ -76,6 +75,39 @@ __global__ void lookup_kernel(	input_t* data,
 	//printf("%lld\n", sum);
 }
 
+__global__ void insert_multi_value_kernel(	input_t* data,
+						unsigned size,
+						unsigned numThreads,
+						multipassConfig_t* mbk,
+						char* states)
+{
+	int index = TID;
+	int* myNumbers = mbk->dmyNumbers;
+	input_t value;
+	value.data1 = 1;
+	largeInt sum = 0;
+
+	for(unsigned i = index; i < size; i += numThreads)
+	{
+		//int sizeIdentifier = (i / numThreads) % 16;
+		//int keySize = 8 + sizeIdentifier * 8;
+		int keySize = sizeof(input_t);
+
+		if(insert_multi_value((void*) &(data[i]), keySize, (void*) &value, keySize, mbk) == true)
+		{
+			myNumbers[index * 2] ++;
+			//states[i] = SUCCEED;
+		}
+		else
+		{
+			myNumbers[index * 2 + 1] ++;
+		}
+
+	}
+	//printf("%lld\n", sum);
+}
+
+
 
 int main(int argc, char** argv)
 {
@@ -95,7 +127,7 @@ int main(int argc, char** argv)
 	
 	srand(time(NULL));
 	for(unsigned i = 0; i < inputDataSize; i ++)
-		inputData[i].data1 = rand() % (inputDataSize * 2);
+		inputData[i].data1 = rand() % (inputDataSize * 1);
 
 
 	input_t* dinputData;
@@ -131,7 +163,7 @@ int main(int argc, char** argv)
 
 	gettimeofday(&partial_start, NULL);
 
-	insert_kernel<<<grid, block>>>(dinputData, 
+	insert_multi_value_kernel<<<grid, block>>>(dinputData, 
 				inputDataSize, 
 				numThreads,
 				dmbk,
@@ -149,6 +181,7 @@ int main(int argc, char** argv)
 	printf("Error after calling the kernel is: %s\n", cudaGetErrorString(errR));
 
 
+#if 0
 	cudaMemset(mbk->dmyNumbers, 0, 2 * numThreads * sizeof(int));
 
 	gettimeofday(&partial_start, NULL);
@@ -165,6 +198,7 @@ int main(int argc, char** argv)
 	ms = partial_end.tv_usec - partial_start.tv_usec;
 	diff = sec * 1000000 + ms;
 	printf("\n%10s:\t\t%0.1fms\n", "Lookup total time", (double)((double)diff/1000.0));
+#endif
 
 
 
@@ -192,11 +226,13 @@ int main(int argc, char** argv)
 	cudaMemcpy(buckets, mbk->buckets, NUM_BUCKETS * sizeof(hashBucket_t*), cudaMemcpyDeviceToHost);
 	
 
-#if 1
 	int totalDepth = 0;
 	int totalValidBuckets = 0;
 	int totalEmpty = 0;
 	int maximumDepth = 0;
+#ifdef MULTI_VALUE
+	int totalValueDepth = 0;
+#endif
 	for(int i = 0; i < NUM_BUCKETS; i ++)
 	{
 		hashBucket_t* bucket = buckets[i];
@@ -208,6 +244,16 @@ int main(int argc, char** argv)
 		int localMaxDepth = 0;
 		while(bucket != NULL)
 		{
+#ifdef MULTI_VALUE
+			int valueDepth = 0;
+			valueHolder_t* valueHolder = bucket->valueHolder;
+			while(valueHolder != NULL)
+			{
+				valueDepth ++;
+				valueHolder = valueHolder->next;
+			}
+			totalValueDepth += valueDepth;
+#endif
 			totalDepth ++;
 			localMaxDepth ++;
 			bucket = bucket->next;
@@ -222,7 +268,11 @@ int main(int argc, char** argv)
 	printf("Average depth: %0.1f\n", averageDepth);
 	printf("Max depth: %d\n", maximumDepth);
 
+#ifdef MULTI_VALUE
+	float averageValueDepth = (float) totalValueDepth / (float) totalDepth;
+	printf("Average value depth: %0.1f\n", averageValueDepth);
 #endif
+
 
 	return 0;
 }

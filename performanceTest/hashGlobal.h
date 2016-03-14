@@ -32,9 +32,15 @@ typedef struct valueHolder_t
 typedef struct
 {
 	largeInt data1;
+#if 0
 	largeInt data2;
 	largeInt data3;
 	largeInt data4;
+
+	largeInt data11;
+	largeInt data12;
+	largeInt data13;
+	largeInt data14;
 
 	largeInt data21;
 	largeInt data22;
@@ -45,11 +51,7 @@ typedef struct
 	largeInt data32;
 	largeInt data33;
 	largeInt data34;
-
-	largeInt data41;
-	largeInt data42;
-	largeInt data43;
-	largeInt data44;
+#endif
 } input_t;
 
 
@@ -176,6 +178,7 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 //__device__ bool addToHashtable(void* key, int keySize, void* value, int valueSize, multipassConfig_t* mbk);
 __device__ bool insert_basic(void* key, int keySize, void* value, int valueSize, multipassConfig_t* mbk);
 __device__ hashBucket_t* lookup_basic(void* key, int keySize, multipassConfig_t* mbk);
+__device__ bool insert_multi_value(void* key, int keySize, void* value, int valueSize, multipassConfig_t* mbk);
 __device__ bool atomicAttemptIncRefCount(int* refCount);
 __device__ int atomicDecRefCount(int* refCount);
 __device__ bool atomicNegateRefCount(int* refCount);
