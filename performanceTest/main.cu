@@ -127,7 +127,7 @@ int main(int argc, char** argv)
 	
 	srand(time(NULL));
 	for(unsigned i = 0; i < inputDataSize; i ++)
-		inputData[i].data1 = rand() % (inputDataSize / 3);
+		inputData[i].data1 = rand() % (inputDataSize / 4);
 
 
 	input_t* dinputData;

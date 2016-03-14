@@ -1,5 +1,5 @@
 #include "hashGlobal.h"
-//#define STATISTICS 1
+#define STATISTICS 1
 
 void hashtableInit(unsigned numBuckets, multipassConfig_t* mbk, unsigned groupSize)
 {
@@ -36,40 +36,20 @@ __device__ bool addNewValueAtomically(void const* key, void* value, int valueSiz
 		setValue(newValue, value, valueSize);
 
 		largeInt atomicReturnedValue, previousValue;
-		largeInt toBeInsertedValue = (largeInt) newValue;
-		//largeInt hostNextValue;
+		largeInt toBeInsertedValue = ((largeInt) newValue - (largeInt) mbk->dbuffer + group->valueParentPage->hashTableOffset); 
 
-		newValue->dnext = ((valueHolder_t*) oldValue)->dnext;
 		newValue->next = ((valueHolder_t*) oldValue)->next;
 
 		// Appending the new value at the beginning of the linked list atomically
 		do
 		{
 
-			previousValue = (largeInt) ((valueHolder_t*) oldValue)->dnext;
-			newValue->dnext = ((valueHolder_t*) oldValue)->dnext;
+			previousValue = (largeInt) ((valueHolder_t*) oldValue)->next;
 			newValue->next = ((valueHolder_t*) oldValue)->next;
 
-			atomicReturnedValue = atomicCAS((unsigned long long int*) &(((valueHolder_t*) oldValue)->dnext), previousValue, toBeInsertedValue);
+			atomicReturnedValue = atomicCAS((unsigned long long int*) &(((valueHolder_t*) oldValue)->next), previousValue, toBeInsertedValue);
 
 		} while(previousValue != atomicReturnedValue);
-
-		// Now that new value is added, store the corresponding host address of this value atomically
-		// 1. calculate the host next value
-		toBeInsertedValue = ((largeInt) newValue - (largeInt) mbk->dbuffer + group->valueParentPage->hashTableOffset); 
-		// 2. the value entry that we should set its host next has the following value as its current host next
-		largeInt mustBeValue = (largeInt) newValue->next;
-		// 3. start from the first value
-		valueHolder_t* targetValue = (valueHolder_t*) oldValue;
-		do
-		{
-			// 4. set the new host value if this is the value entry we inserted above, otherwise go to next
-			atomicReturnedValue = atomicCAS((unsigned long long int*) &((targetValue)->next), mustBeValue, toBeInsertedValue);
-
-			// 5. Going to the next entry no matter if atomic operation was successfull or not. If successful, this doesn't matter.
-			targetValue = targetValue->dnext;
-
-		} while(atomicReturnedValue != mustBeValue);
 
 		return true;
 	}
@@ -242,18 +222,15 @@ __device__ bool insert_multi_value(void* key, int keySize, void* value, int valu
 
 						mbk->isNextDeads[hashValue] = 0;
 
-						//TODO: this assumes that input key is aligned by ALIGNMENT, which is not a safe assumption
 						for(int i = 0; i < (keySizeAligned / ALIGNMET); i ++)
 							*((largeInt*) ((largeInt) newBucket + sizeof(hashBucket_t) + i * ALIGNMET)) = *((largeInt*) ((largeInt) key + i * ALIGNMET));
 						setValue(newBucket->dvalueHolder, value, valueSizeAligned);
 						newBucket->dvalueHolder->next = NULL;
-						newBucket->dvalueHolder->dnext = NULL;
 						newBucket->dvalueHolder->valueSize = (largeInt) valueSize;
 
 						for(int i = 0; i < (valueSizeAligned / ALIGNMET); i ++)
 							*((largeInt*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned + sizeof(valueHolder_t) + i * ALIGNMET)) = *((largeInt*) ((largeInt) value + i * ALIGNMET));
 						((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->next = NULL;
-						((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->dnext = NULL;
 						((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->valueSize = valueSize;
 
 						mbk->dbuckets[hashValue] = newBucket;
@@ -277,7 +254,6 @@ __device__ bool insert_multi_value(void* key, int keySize, void* value, int valu
 
 	return success;
 }
-
 
 __device__ bool insert_basic(void* key, int keySize, void* value, int valueSize, multipassConfig_t* mbk)
 {
@@ -396,7 +372,7 @@ multipassConfig_t* initMultipassBookkeeping(	int numThreads,
 	mbk->numRecords = numRecords;
 
 
-	mbk->availableGPUMemory = (1800 * (1 << 20));
+	mbk->availableGPUMemory = (1400 * (1 << 20));
 	mbk->hhashTableBufferSize = MAX_NO_PASSES * mbk->availableGPUMemory;
 	mbk->hhashTableBaseAddr = malloc(mbk->hhashTableBufferSize);
 	memset(mbk->hhashTableBaseAddr, 0, mbk->hhashTableBufferSize);
