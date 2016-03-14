@@ -160,6 +160,10 @@ typedef struct
 	int numThreads;
 	int epochNum;
 	int numRecords;
+
+	int counter1;
+	int counter2;
+	int counter3;
 } multipassConfig_t;
 
 
@@ -173,7 +177,7 @@ __device__ page_t* allocateNewPage(multipassConfig_t* mbk);
 
 void hashtableInit(unsigned numBuckets, multipassConfig_t* mbk, unsigned groupSize);
 __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets);
-__device__ bool resolveSameKeyAddition(void const* key, void* value, void* oldValue, bucketGroup_t* group, multipassConfig_t* mbk);
+__device__ bool addNewValueAtomically(void const* key, void* value, int valueSize, void* oldValue, bucketGroup_t* group, multipassConfig_t* mbk);
 __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize, multipassConfig_t* mbk);
 //__device__ bool addToHashtable(void* key, int keySize, void* value, int valueSize, multipassConfig_t* mbk);
 __device__ bool insert_basic(void* key, int keySize, void* value, int valueSize, multipassConfig_t* mbk);

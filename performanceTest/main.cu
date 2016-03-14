@@ -127,7 +127,7 @@ int main(int argc, char** argv)
 	
 	srand(time(NULL));
 	for(unsigned i = 0; i < inputDataSize; i ++)
-		inputData[i].data1 = rand() % (inputDataSize * 1);
+		inputData[i].data1 = rand() % (inputDataSize / 3);
 
 
 	input_t* dinputData;
@@ -201,6 +201,11 @@ int main(int argc, char** argv)
 #endif
 
 
+	cudaMemcpy(mbk, dmbk, sizeof(multipassConfig_t), cudaMemcpyDeviceToHost);
+	unsigned totalCounter = mbk->counter1 + mbk->counter2 + mbk->counter3;
+	printf("Counter 1: %0.1f\%\n", ((float) (mbk->counter1) / (float) totalCounter) * 100.0);
+	printf("Counter 2: %0.1f\%\n", ((float) (mbk->counter2) / (float) totalCounter) * 100.0);
+	printf("Counter 3: %0.1f\%\n", ((float) (mbk->counter3) / (float) totalCounter) * 100.0);
 
 
 	int* dmyNumbers = mbk->dmyNumbers;

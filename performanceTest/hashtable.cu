@@ -1,4 +1,5 @@
 #include "hashGlobal.h"
+//#define STATISTICS 1
 
 void hashtableInit(unsigned numBuckets, multipassConfig_t* mbk, unsigned groupSize)
 {
@@ -25,23 +26,87 @@ __device__ unsigned int hashFunc(char* str, int len, unsigned numBuckets)
         return number % numBuckets;
 }
 
-__device__ bool resolveSameKeyAddition(void const* key, void* value, int valueSize, void* oldValue, bucketGroup_t* group, multipassConfig_t* mbk)
+__device__ bool addNewValueAtomically(void const* key, void* value, int valueSize, void* oldValue, bucketGroup_t* group, multipassConfig_t* mbk)
 {
 	//TODO: here make it compatible with the new structure of vlaue at the end fo the bucket...
 	valueHolder_t* newValue = (valueHolder_t*) multipassMallocValue(sizeof(valueHolder_t) + valueSize, group, mbk);
 	if(newValue != NULL)
 	{
-		newValue->dnext = ((valueHolder_t*) oldValue)->dnext;
-		newValue->next = ((valueHolder_t*) oldValue)->next;
 		newValue->valueSize = (largeInt) valueSize;
 		setValue(newValue, value, valueSize);
 
-		((valueHolder_t*) oldValue)->dnext = newValue;
-		((valueHolder_t*) oldValue)->next = (valueHolder_t*) ((largeInt) newValue - (largeInt) mbk->dbuffer + group->valueParentPage->hashTableOffset);
+		largeInt atomicReturnedValue, previousValue;
+		largeInt toBeInsertedValue = (largeInt) newValue;
+		//largeInt hostNextValue;
+
+		newValue->dnext = ((valueHolder_t*) oldValue)->dnext;
+		newValue->next = ((valueHolder_t*) oldValue)->next;
+
+		// Appending the new value at the beginning of the linked list atomically
+		do
+		{
+
+			previousValue = (largeInt) ((valueHolder_t*) oldValue)->dnext;
+			newValue->dnext = ((valueHolder_t*) oldValue)->dnext;
+			newValue->next = ((valueHolder_t*) oldValue)->next;
+
+			atomicReturnedValue = atomicCAS((unsigned long long int*) &(((valueHolder_t*) oldValue)->dnext), previousValue, toBeInsertedValue);
+
+		} while(previousValue != atomicReturnedValue);
+
+		// Now that new value is added, store the corresponding host address of this value atomically
+		// 1. calculate the host next value
+		toBeInsertedValue = ((largeInt) newValue - (largeInt) mbk->dbuffer + group->valueParentPage->hashTableOffset); 
+		// 2. the value entry that we should set its host next has the following value as its current host next
+		largeInt mustBeValue = (largeInt) newValue->next;
+		// 3. start from the first value
+		valueHolder_t* targetValue = (valueHolder_t*) oldValue;
+		do
+		{
+			// 4. set the new host value if this is the value entry we inserted above, otherwise go to next
+			atomicReturnedValue = atomicCAS((unsigned long long int*) &((targetValue)->next), mustBeValue, toBeInsertedValue);
+
+			// 5. Going to the next entry no matter if atomic operation was successfull or not. If successful, this doesn't matter.
+			targetValue = targetValue->dnext;
+
+		} while(atomicReturnedValue != mustBeValue);
+
 		return true;
 	}
 	return false;
 }
+
+__device__ hashBucket_t* containsKeyUntilEntry(hashBucket_t* bucket, void* key, int keySize, hashBucket_t* lastCheckedBucket, multipassConfig_t* mbk)
+{
+	// This should never be null... that's why I'm not checking for null
+	while(bucket != lastCheckedBucket)
+	{
+		char* oldKey = (char*) ((largeInt) bucket + sizeof(hashBucket_t));
+		bool success = true;
+
+		int i = 0;
+		for(; i < keySize/ALIGNMET && success; i ++)
+		{
+			if(((largeInt*) oldKey)[i] != ((largeInt*) key)[i])
+				success = false;
+		}
+		i *= ALIGNMET;
+		for(; i < keySize && success; i ++)
+		{
+			if(oldKey[i] != ((char*) key)[i])
+				success = false;
+		}
+
+		if(success)
+		{
+			return bucket;
+		}
+
+		bucket = bucket->dnext;
+	}
+	return NULL;
+}
+
 
 __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySize, multipassConfig_t* mbk)
 {
@@ -82,96 +147,133 @@ __device__ bool insert_multi_value(void* key, int keySize, void* value, int valu
 	unsigned hashValue = hashFunc((char*) key, keySize, mbk->numBuckets);
 
 	unsigned groupNo = hashValue / mbk->groupSize;
-	//unsigned groupNo = hashValue / GROUP_SIZE;
 
 	bucketGroup_t* group = &(mbk->groups[groupNo]);
 	
 	hashBucket_t* existingBucket;
+	hashBucket_t* lastCheckedBucket;
 
 	int keySizeAligned = (keySize % ALIGNMET == 0)? keySize : keySize + (ALIGNMET - (keySize % ALIGNMET));
 	int valueSizeAligned = (valueSize % ALIGNMET == 0)? valueSize : valueSize + (ALIGNMET - (valueSize % ALIGNMET));
 
-	unsigned oldLock = 1;
+	hashBucket_t* dbucket = mbk->dbuckets[hashValue];
+	lastCheckedBucket = dbucket;
+	
 
-	do
+	// Scenario 1: if the key already exists, without acquiring the lock, just insert the new value atomically
+	if(mbk->isNextDeads[hashValue] != 1 && (existingBucket = containsKey(dbucket, key, keySize, mbk)) != NULL)
 	{
-		oldLock = atomicExch((unsigned*) &(mbk->locks[hashValue]), 1);
-
-		if(oldLock == 0)
+		void* oldValue = (void*) ((largeInt) existingBucket + sizeof(hashBucket_t) + keySizeAligned);
+		if(!addNewValueAtomically(key, value, valueSizeAligned, oldValue, group, mbk))
 		{
-			hashBucket_t* dbucket = mbk->dbuckets[hashValue];
-			hashBucket_t* hbucket = mbk->buckets[hashValue];
-
-			//First see if the key already exists in one of the entries of this bucket
-			//The returned bucket is the 'entry' in which the key exists
-			if(mbk->isNextDeads[hashValue] != 1 && (existingBucket = containsKey(dbucket, key, keySize, mbk)) != NULL)
+			group->needed = 1;
+			page_t* temp = group->parentPage;
+			while(temp != NULL)
 			{
-				void* oldValue = (void*) ((largeInt) existingBucket + sizeof(hashBucket_t) + keySizeAligned);
-				if(!resolveSameKeyAddition(key, value, valueSizeAligned, oldValue, group, mbk))
-				{
-					group->needed = 1;
-					page_t* temp = group->parentPage;
-					while(temp != NULL)
-					{
-						temp->needed = 1;
-						temp = temp->next;
-					}
-					success = false;
-				}
+				temp->needed = 1;
+				temp = temp->next;
 			}
-			else
-			{
-				hashBucket_t* newBucket = (hashBucket_t*) multipassMalloc(sizeof(hashBucket_t) + keySizeAligned + sizeof(valueHolder_t) + valueSizeAligned, group, mbk);
-				if(newBucket != NULL)
-				{
-					//TODO reduce the base offset if not null
-					//newBucket->next = (bucket == NULL)? NULL : (hashBucket_t*) ((largeInt) bucket - (largeInt) mbk->dbuffer);
-					newBucket->dnext = NULL;
-					newBucket->next = NULL;
-					if(dbucket != NULL)
-					{
-						newBucket->dnext = dbucket;
-						newBucket->next = hbucket;
-					}
-
-					if(mbk->isNextDeads[hashValue] == 1)
-						newBucket->isNextDead = 1;
-					newBucket->keySize = (short) keySize;
-					newBucket->valueSize = (short) valueSize;
-					newBucket->dvalueHolder = (valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned);
-					newBucket->valueHolder = (valueHolder_t*) ((largeInt) newBucket->dvalueHolder - (largeInt) mbk->dbuffer + group->parentPage->hashTableOffset);;
-
-					mbk->dbuckets[hashValue] = newBucket;
-					mbk->buckets[hashValue] = (hashBucket_t*) ((largeInt) newBucket - (largeInt) mbk->dbuffer + group->parentPage->hashTableOffset);
-
-					mbk->isNextDeads[hashValue] = 0;
-
-					//TODO: this assumes that input key is aligned by ALIGNMENT, which is not a safe assumption
-					for(int i = 0; i < (keySizeAligned / ALIGNMET); i ++)
-						*((largeInt*) ((largeInt) newBucket + sizeof(hashBucket_t) + i * ALIGNMET)) = *((largeInt*) ((largeInt) key + i * ALIGNMET));
-					setValue(newBucket->dvalueHolder, value, valueSizeAligned);
-					newBucket->dvalueHolder->next = NULL;
-					newBucket->dvalueHolder->dnext = NULL;
-					newBucket->dvalueHolder->valueSize = (largeInt) valueSize;
-					
-#if 1
-					for(int i = 0; i < (valueSizeAligned / ALIGNMET); i ++)
-						*((largeInt*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned + sizeof(valueHolder_t) + i * ALIGNMET)) = *((largeInt*) ((largeInt) value + i * ALIGNMET));
-					((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->next = NULL;
-					((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->dnext = NULL;
-					((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->valueSize = valueSize;
+			success = false;
+		}
+#ifdef STATISTICS
+		atomicInc((unsigned*) &(mbk->counter1), INT_MAX);
 #endif
-					
+	}
+	else 
+	{
+		unsigned oldLock = 1;
+
+		do
+		{
+			oldLock = atomicExch((unsigned*) &(mbk->locks[hashValue]), 1);
+			if(oldLock == 0)
+			{
+				dbucket = mbk->dbuckets[hashValue];
+
+				if(mbk->isNextDeads[hashValue] != 1 && (existingBucket = containsKeyUntilEntry(dbucket, key, keySize, lastCheckedBucket, mbk)) != NULL)
+				{
+					// Scenario 2: the key is added a moment ago (just before we acquired the lock), let's unlock and inser the value atomically
+					atomicExch((unsigned*) &(mbk->locks[hashValue]), 0);
+
+					void* oldValue = (void*) ((largeInt) existingBucket + sizeof(hashBucket_t) + keySizeAligned);
+					if(!addNewValueAtomically(key, value, valueSizeAligned, oldValue, group, mbk))
+					{
+						group->needed = 1;
+						page_t* temp = group->parentPage;
+						while(temp != NULL)
+						{
+							temp->needed = 1;
+							temp = temp->next;
+						}
+						success = false;
+					}
+#ifdef STATISTICS
+					atomicInc((unsigned*) &(mbk->counter2), INT_MAX);
+#endif
+
 				}
 				else
 				{
-					success = false;
-				}
-			}
+#ifdef STATISTICS
+					atomicInc((unsigned*) &(mbk->counter3), INT_MAX);
+#endif
+					hashBucket_t* newBucket = (hashBucket_t*) multipassMalloc(sizeof(hashBucket_t) + keySizeAligned + sizeof(valueHolder_t) + valueSizeAligned, group, mbk);
+					hashBucket_t* hbucket = mbk->buckets[hashValue];
 
-			atomicExch((unsigned*) &(mbk->locks[hashValue]), 0);
-		}
-	} while(oldLock == 1);
+					if(newBucket != NULL)
+					{
+						//TODO reduce the base offset if not null
+						//newBucket->next = (bucket == NULL)? NULL : (hashBucket_t*) ((largeInt) bucket - (largeInt) mbk->dbuffer);
+						newBucket->dnext = NULL;
+						newBucket->next = NULL;
+						if(dbucket != NULL)
+						{
+							newBucket->dnext = dbucket;
+							newBucket->next = hbucket;
+						}
+
+						if(mbk->isNextDeads[hashValue] == 1)
+							newBucket->isNextDead = 1;
+						newBucket->keySize = (short) keySize;
+						newBucket->valueSize = (short) valueSize;
+						newBucket->dvalueHolder = (valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned);
+						newBucket->valueHolder = (valueHolder_t*) ((largeInt) newBucket->dvalueHolder - (largeInt) mbk->dbuffer + group->parentPage->hashTableOffset);;
+
+
+						mbk->isNextDeads[hashValue] = 0;
+
+						//TODO: this assumes that input key is aligned by ALIGNMENT, which is not a safe assumption
+						for(int i = 0; i < (keySizeAligned / ALIGNMET); i ++)
+							*((largeInt*) ((largeInt) newBucket + sizeof(hashBucket_t) + i * ALIGNMET)) = *((largeInt*) ((largeInt) key + i * ALIGNMET));
+						setValue(newBucket->dvalueHolder, value, valueSizeAligned);
+						newBucket->dvalueHolder->next = NULL;
+						newBucket->dvalueHolder->dnext = NULL;
+						newBucket->dvalueHolder->valueSize = (largeInt) valueSize;
+
+						for(int i = 0; i < (valueSizeAligned / ALIGNMET); i ++)
+							*((largeInt*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned + sizeof(valueHolder_t) + i * ALIGNMET)) = *((largeInt*) ((largeInt) value + i * ALIGNMET));
+						((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->next = NULL;
+						((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->dnext = NULL;
+						((valueHolder_t*) ((largeInt) newBucket + sizeof(hashBucket_t) + keySizeAligned))->valueSize = valueSize;
+
+						mbk->dbuckets[hashValue] = newBucket;
+						mbk->buckets[hashValue] = (hashBucket_t*) ((largeInt) newBucket - (largeInt) mbk->dbuffer + group->parentPage->hashTableOffset);
+
+					}
+					else
+					{
+						success = false;
+					}
+
+					atomicExch((unsigned*) &(mbk->locks[hashValue]), 0);
+
+				}
+
+			}
+		} while(oldLock == 1);
+	
+		
+	}
 
 	return success;
 }
