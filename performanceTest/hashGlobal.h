@@ -32,11 +32,11 @@ typedef struct valueHolder_t
 typedef struct
 {
 	largeInt data1;
-#if 0
 	largeInt data2;
 	largeInt data3;
 	largeInt data4;
 
+#if 0
 	largeInt data11;
 	largeInt data12;
 	largeInt data13;
@@ -104,6 +104,8 @@ typedef struct
 	page_t* valueParentPage;
 	unsigned pageLock;
 	unsigned needed;
+	unsigned overflownKey;
+	unsigned overflownValue;
 	
 } bucketGroup_t;
 

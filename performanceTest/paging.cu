@@ -82,6 +82,7 @@ __device__ void* multipassMalloc(unsigned size, bucketGroup_t* myGroup, multipas
 			{
 				//releaseLock
 				atomicExch(&(myGroup->pageLock), 0);
+				myGroup->overflownKey = 1;
 				return NULL;
 			}
 
@@ -148,6 +149,7 @@ __device__ void* multipassMallocValue(unsigned size, bucketGroup_t* myGroup, mul
 			{
 				//releaseLock
 				atomicExch(&(myGroup->pageLock), 0);
+				myGroup->overflownValue = 1;
 				return NULL;
 			}
 

@@ -129,6 +129,8 @@ __device__ bool insert_multi_value(void* key, int keySize, void* value, int valu
 	unsigned groupNo = hashValue / mbk->groupSize;
 
 	bucketGroup_t* group = &(mbk->groups[groupNo]);
+	if(group->overflownKey == 1 && group->overflownValue == 1)
+		return false;
 	
 	hashBucket_t* existingBucket;
 	hashBucket_t* lastCheckedBucket;

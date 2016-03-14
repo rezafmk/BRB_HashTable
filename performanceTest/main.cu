@@ -53,8 +53,8 @@ __global__ void lookup_kernel(	input_t* data,
 {
 	int index = TID;
 	int* myNumbers = mbk->dmyNumbers;
-	input_t value;
-	value.data1 = 1;
+	//input_t value;
+	//value.data1 = 1;
 
 	for(unsigned i = index; i < size; i += numThreads)
 	{
@@ -85,7 +85,7 @@ __global__ void insert_multi_value_kernel(	input_t* data,
 	int* myNumbers = mbk->dmyNumbers;
 	input_t value;
 	value.data1 = 1;
-	largeInt sum = 0;
+	//largeInt sum = 0;
 
 	for(unsigned i = index; i < size; i += numThreads)
 	{
@@ -203,9 +203,9 @@ int main(int argc, char** argv)
 
 	cudaMemcpy(mbk, dmbk, sizeof(multipassConfig_t), cudaMemcpyDeviceToHost);
 	unsigned totalCounter = mbk->counter1 + mbk->counter2 + mbk->counter3;
-	printf("Counter 1: %0.1f\%\n", ((float) (mbk->counter1) / (float) totalCounter) * 100.0);
-	printf("Counter 2: %0.1f\%\n", ((float) (mbk->counter2) / (float) totalCounter) * 100.0);
-	printf("Counter 3: %0.1f\%\n", ((float) (mbk->counter3) / (float) totalCounter) * 100.0);
+	printf("Counter 1: %0.1f%\n", ((float) (mbk->counter1) / (float) totalCounter) * (float) 100);
+	printf("Counter 2: %0.1f%\n", ((float) (mbk->counter2) / (float) totalCounter) * (float) 100);
+	printf("Counter 3: %0.1f%\n", ((float) (mbk->counter3) / (float) totalCounter) * (float) 100);
 
 
 	int* dmyNumbers = mbk->dmyNumbers;
