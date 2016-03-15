@@ -18,6 +18,9 @@
 #define THREAD_ID (threadIdx.x)
 #define TID (BLOCK_ID * blockDim.x + THREAD_ID)
 
+
+//#define MULTI_VALUE 1
+
 enum recordType { UNTESTED = 0, SUCCEED = 1, FAILED = 2};
 
 typedef long long int largeInt;
@@ -92,8 +95,8 @@ typedef struct hashBucket_t
 	struct hashBucket_t* dnext;
 	valueHolder_t* valueHolder;
 	valueHolder_t* dvalueHolder;
-	short isNextDead;
 	unsigned short lock;
+	short isNextDead;
 	short keySize;
 	short valueSize;
 } hashBucket_t;
@@ -186,6 +189,7 @@ __device__ hashBucket_t* containsKey(hashBucket_t* bucket, void* key, int keySiz
 __device__ bool insert_basic(void* key, int keySize, void* value, int valueSize, multipassConfig_t* mbk);
 __device__ hashBucket_t* lookup_basic(void* key, int keySize, multipassConfig_t* mbk);
 __device__ bool insert_multi_value(void* key, int keySize, void* value, int valueSize, multipassConfig_t* mbk);
+__device__ bool insert_update_value(void* key, int keySize, void* value, int valueSize, multipassConfig_t* mbk);
 __device__ bool atomicAttemptIncRefCount(int* refCount);
 __device__ int atomicDecRefCount(int* refCount);
 __device__ bool atomicNegateRefCount(int* refCount);

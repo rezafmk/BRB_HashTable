@@ -11,7 +11,6 @@
 
 #define NUMTHREADS (MAXBLOCKS * BLOCKSIZE)
 
-#define MULTI_VALUE 1
 
 
 
@@ -120,6 +119,44 @@ __global__ void insert_multi_value_kernel(	input_t* data,
 }
 
 
+__global__ void insert_update_value_kernel(	input_t* data,
+						unsigned size,
+						unsigned numThreads,
+						multipassConfig_t* mbk,
+						char* states)
+{
+	int index = TID;
+	bool* failedFlag = mbk->dfailedFlag;
+	int* myNumbers = mbk->dmyNumbers;
+	input_t value;
+	value.data1 = 1;
+	//largeInt sum = 0;
+
+	for(unsigned i = index; i < size; i += numThreads)
+	{
+		int sizeIdentifier = (i / numThreads) % 16;
+		int keySize = 8 + sizeIdentifier * 8;
+		//int keySize = sizeof(input_t);
+
+		if(states[i] == (char) 0)
+		{
+			if(insert_update_value((void*) &(data[i]), keySize, (void*) &value, keySize, mbk) == true)
+			{
+				myNumbers[index * 2] ++;
+				states[i] = SUCCEED;
+			}
+			else
+			{
+				myNumbers[index * 2 + 1] ++;
+				*failedFlag = true;
+			}
+		}
+
+	}
+	//printf("%lld\n", sum);
+}
+
+
 
 int main(int argc, char** argv)
 {
@@ -139,7 +176,7 @@ int main(int argc, char** argv)
 	
 	srand(time(NULL));
 	for(unsigned i = 0; i < inputDataSize; i ++)
-		inputData[i].data1 = rand() % (inputDataSize / 4);
+		inputData[i].data1 = rand() % (inputDataSize / 8);
 
 
 	input_t* dinputData;
@@ -169,6 +206,11 @@ int main(int argc, char** argv)
 
 	errR = cudaGetLastError();
 	printf("#######Error before calling the kernel is 2: %s\n\n", cudaGetErrorString(errR));
+	if(errR != cudaSuccess)
+	{
+		printf("Aborting..\n");
+		return 1;
+	}
 
 	//int passNo = 1;
 	//bool failedFlag = false;
@@ -181,7 +223,7 @@ int main(int argc, char** argv)
 		printf("=========== Starting pass %d ===========\n", passNo);
 		gettimeofday(&partial_start, NULL);
 
-		insert_multi_value_kernel<<<grid, block>>>(dinputData, 
+		insert_update_value_kernel<<<grid, block>>>(dinputData, 
 				inputDataSize, 
 				numThreads,
 				dmbk,
@@ -194,7 +236,7 @@ int main(int argc, char** argv)
 		diff += sec * 1000000 + ms;
 
 
-#if 0
+#if 1
 		int* dmyNumbers = mbk->dmyNumbers;
 		int* myNumbers = mbk->myNumbers;
 		cudaMemcpy(myNumbers, dmyNumbers, 2 * numThreads * sizeof(int), cudaMemcpyDeviceToHost);
@@ -215,7 +257,7 @@ int main(int argc, char** argv)
 
 
 
-		failedFlag = checkAndResetPass(mbk, dmbk);
+		//failedFlag = checkAndResetPass(mbk, dmbk);
 		passNo ++;
 
 	} while(failedFlag);
