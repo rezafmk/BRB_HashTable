@@ -23,6 +23,7 @@ __global__ void insert_kernel(	input_t* data,
 {
 	int index = TID;
 	int* myNumbers = mbk->dmyNumbers;
+	bool* failedFlag = mbk->dfailedFlag;
 	input_t value;
 	value.data1 = 1;
 
@@ -31,14 +32,18 @@ __global__ void insert_kernel(	input_t* data,
 		int sizeIdentifier = (i / numThreads) % 16;
 		int keySize = 8 + sizeIdentifier * 8;
 
-		if(insert_basic((void*) &(data[i]), keySize, (void*) &value, keySize, mbk) == true)
+		if(states[i] == (char) 0)
 		{
-			myNumbers[index * 2] ++;
-			//states[i] = SUCCEED;
-		}
-		else
-		{
-			myNumbers[index * 2 + 1] ++;
+			if(insert_basic((void*) &(data[i]), keySize, (void*) &value, keySize, mbk) == true)
+			{
+				myNumbers[index * 2] ++;
+				//states[i] = SUCCEED;
+			}
+			else
+			{
+				myNumbers[index * 2 + 1] ++;
+				*failedFlag = true;
+			}
 		}
 
 	}
@@ -53,6 +58,7 @@ __global__ void lookup_kernel(	input_t* data,
 {
 	int index = TID;
 	int* myNumbers = mbk->dmyNumbers;
+	bool* failedFlag = mbk->dfailedFlag;
 	//input_t value;
 	//value.data1 = 1;
 
@@ -68,6 +74,7 @@ __global__ void lookup_kernel(	input_t* data,
 		}
 		else
 		{
+			*failedFlag = true;
 			myNumbers[index * 2 + 1] ++;
 		}
 
@@ -82,6 +89,7 @@ __global__ void insert_multi_value_kernel(	input_t* data,
 						char* states)
 {
 	int index = TID;
+	bool* failedFlag = mbk->dfailedFlag;
 	int* myNumbers = mbk->dmyNumbers;
 	input_t value;
 	value.data1 = 1;
@@ -89,18 +97,22 @@ __global__ void insert_multi_value_kernel(	input_t* data,
 
 	for(unsigned i = index; i < size; i += numThreads)
 	{
-		//int sizeIdentifier = (i / numThreads) % 16;
-		//int keySize = 8 + sizeIdentifier * 8;
-		int keySize = sizeof(input_t);
+		int sizeIdentifier = (i / numThreads) % 16;
+		int keySize = 8 + sizeIdentifier * 8;
+		//int keySize = sizeof(input_t);
 
-		if(insert_multi_value((void*) &(data[i]), keySize, (void*) &value, keySize, mbk) == true)
+		if(states[i] == (char) 0)
 		{
-			myNumbers[index * 2] ++;
-			//states[i] = SUCCEED;
-		}
-		else
-		{
-			myNumbers[index * 2 + 1] ++;
+			if(insert_multi_value((void*) &(data[i]), keySize, (void*) &value, keySize, mbk) == true)
+			{
+				myNumbers[index * 2] ++;
+				states[i] = SUCCEED;
+			}
+			else
+			{
+				myNumbers[index * 2 + 1] ++;
+				*failedFlag = true;
+			}
 		}
 
 	}
@@ -153,27 +165,61 @@ int main(int argc, char** argv)
 	struct timeval partial_start, partial_end;//, bookkeeping_start, bookkeeping_end, passtime_start, passtime_end;
 	time_t sec;
 	time_t ms;
-	time_t diff;
+	time_t diff = 0;
 
 	errR = cudaGetLastError();
-	printf("#######Error before calling the kernel is 2: %s\n", cudaGetErrorString(errR));
+	printf("#######Error before calling the kernel is 2: %s\n\n", cudaGetErrorString(errR));
 
 	//int passNo = 1;
 	//bool failedFlag = false;
 
-	gettimeofday(&partial_start, NULL);
+	int passNo = 1;
+	bool failedFlag = false;
+	do
+	{
 
-	insert_multi_value_kernel<<<grid, block>>>(dinputData, 
+		printf("=========== Starting pass %d ===========\n", passNo);
+		gettimeofday(&partial_start, NULL);
+
+		insert_multi_value_kernel<<<grid, block>>>(dinputData, 
 				inputDataSize, 
 				numThreads,
 				dmbk,
 				mbk->dstates);
-	cudaThreadSynchronize();
+		cudaThreadSynchronize();
 
-	gettimeofday(&partial_end, NULL);
-	sec = partial_end.tv_sec - partial_start.tv_sec;
-	ms = partial_end.tv_usec - partial_start.tv_usec;
-	diff = sec * 1000000 + ms;
+		gettimeofday(&partial_end, NULL);
+		sec = partial_end.tv_sec - partial_start.tv_sec;
+		ms = partial_end.tv_usec - partial_start.tv_usec;
+		diff += sec * 1000000 + ms;
+
+
+#if 0
+		int* dmyNumbers = mbk->dmyNumbers;
+		int* myNumbers = mbk->myNumbers;
+		cudaMemcpy(myNumbers, dmyNumbers, 2 * numThreads * sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemset(dmyNumbers, 0, 2 * numThreads * sizeof(int));
+
+		largeInt totalSuccess = 0;
+		largeInt totalFailed = 0;
+		for(int i = 0; i < numThreads; i ++)
+		{
+			totalSuccess += myNumbers[i * 2];
+			totalFailed += myNumbers[i * 2 + 1];
+		}
+
+		printf("Total success: %lld\n", totalSuccess);
+		printf("Total failure: %lld\n", totalFailed);
+
+#endif
+
+
+
+		failedFlag = checkAndResetPass(mbk, dmbk);
+		passNo ++;
+
+	} while(failedFlag);
+
 	printf("\n%10s:\t\t%0.1fms\n", "Insert total time", (double)((double)diff/1000.0));
 
 
@@ -208,11 +254,8 @@ int main(int argc, char** argv)
 	printf("Counter 3: %0.1f%\n", ((float) (mbk->counter3) / (float) totalCounter) * (float) 100);
 
 
-	int* dmyNumbers = mbk->dmyNumbers;
-	int* myNumbers = mbk->myNumbers;
-	cudaMemcpy(myNumbers, dmyNumbers, 2 * numThreads * sizeof(int), cudaMemcpyDeviceToHost);
-	cudaMemset(dmyNumbers, 0, 2 * numThreads * sizeof(int));
 
+#if 0
 	largeInt totalSuccess = 0;
 	largeInt totalFailed = 0;
 	for(int i = 0; i < numThreads; i ++)
@@ -223,6 +266,7 @@ int main(int argc, char** argv)
 
 	printf("Total success: %lld\n", totalSuccess);
 	printf("Total failure: %lld\n", totalFailed);
+#endif
 
 
 

@@ -359,7 +359,12 @@ __global__ void setGroupsPointersDead(multipassConfig_t* mbk, unsigned numBucket
 		if(mbk->groups[groupNo].needed == 0)
 			mbk->isNextDeads[index] = 1;
 	}
-	
+	if(index < mbk->groupSize)
+	{
+		mbk->groups[index].overflownKey = 0;
+		mbk->groups[index].overflownValue = 0;
+	}
+
 }
 
 
@@ -465,6 +470,8 @@ bool checkAndResetPass(multipassConfig_t* mbk, multipassConfig_t* dmbk)
 	int freeListCounter = 0;
 	int neededCounter = 0;
 	int unneededCounter = 0;
+	// Resetting the key page counter
+	mbk->keyPageCounter = 0;
 	for(int i = 0; i < mbk->totalNumPages; i ++)
 	{
 		if(mbk->hpages[i].needed == 0)
@@ -484,6 +491,7 @@ bool checkAndResetPass(multipassConfig_t* mbk, multipassConfig_t* dmbk)
 			mbk->hpages[i].needed = 0;
 			//printf("Page %d is needed..\n", i);
 			neededCounter ++;
+			//mbk->keyPageCounter ++;
 		}
 	}
 
@@ -504,6 +512,7 @@ bool checkAndResetPass(multipassConfig_t* mbk, multipassConfig_t* dmbk)
 
 
 	mbk->initialPageAssignedCounter = 0;
+
 
 
 	errR = cudaGetLastError();
